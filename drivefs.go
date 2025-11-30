@@ -200,7 +200,7 @@ func (dfs *DriveFS) openFile(file *drive.File, name string) (*DriveFile, error) 
 
 	content, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, &fs.PathError{Op: "read", Path: name, Err: err}
 	}
 
 	modTime, _ := time.Parse(time.RFC3339, file.ModifiedTime)
