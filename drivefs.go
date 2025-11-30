@@ -229,7 +229,7 @@ func (dfs *DriveFS) openFileContext(ctx context.Context, file *drive.File, name 
 		return nil, &fs.PathError{Op: "read", Path: name, Err: err}
 	}
 
-	modTime, err := time.Parse(time.RFC3339, file.ModifiedTime)
+	modTime, err := parseModTime(file.ModifiedTime)
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fmt.Errorf("invalid modification time: %w", err)}
 	}
@@ -247,6 +247,11 @@ func escapeQuery(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "'", "\\'")
 	return s
+}
+
+// parseModTime parses a modification time string in RFC3339 format.
+func parseModTime(modifiedTime string) (time.Time, error) {
+	return time.Parse(time.RFC3339, modifiedTime)
 }
 
 // DriveFile implements fs.File for a Google Drive file.
@@ -281,7 +286,7 @@ func (f *DriveFile) Close() error {
 }
 
 // DriveDir implements fs.File and fs.ReadDirFile for a Google Drive directory.
-// Note: DriveDir is not safe for concurrent use from multiple goroutines.
+// DriveDir's ReadDir method is protected by a mutex for concurrent use.
 type DriveDir struct {
 	name    string
 	entries []fs.DirEntry
@@ -370,7 +375,7 @@ func (e *DriveDirEntry) Type() fs.FileMode {
 
 // Info returns the file info.
 func (e *DriveDirEntry) Info() (fs.FileInfo, error) {
-	modTime, err := time.Parse(time.RFC3339, e.file.ModifiedTime)
+	modTime, err := parseModTime(e.file.ModifiedTime)
 	if err != nil {
 		return nil, fmt.Errorf("invalid modification time for file %q: %w", e.file.Name, err)
 	}
