@@ -19,6 +19,9 @@ import (
 	"google.golang.org/api/drive/v3"
 )
 
+const MimeTypeDriveGoogleAppsFolder = "application/vnd.google-apps.folder"
+const MimeTypePrefixGoogleApps = "application/vnd.google-apps."
+
 // DriveFS implements fs.FS for Google Drive.
 // It provides a read-only filesystem view of Google Drive contents.
 // Note: DriveFS instances created with WithDriveID share the same service with the original.
@@ -64,14 +67,19 @@ func (d *DriveFS) OpenContext(ctx context.Context, name string) (fs.File, error)
 	// Get file metadata
 	file, err := d.service.Files.Get(fileID).
 		Context(ctx).
-		Fields("id, name, mimeType, size, modifiedTime, createdTime").
+		Fields("id,name,mimeType,size,modifiedTime,createdTime").
 		Do()
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
 
 	// Check if it's a directory (folder)
-	if file.MimeType == "application/vnd.google-apps.folder" {
+	if file.MimeType == MimeTypeDriveGoogleAppsFolder {
+		return d.openDir(ctx, file)
+	}
+
+	// Check if it's a directory (folder)
+	if strings.HasPrefix(file.MimeType, MimeTypePrefixGoogleApps) {
 		return d.openDir(ctx, file)
 	}
 
@@ -160,14 +168,14 @@ func (d *DriveFS) resolveFileIDFromPath(ctx context.Context, path []string) (id 
 	currentID := d.rootID
 	for _, part := range path {
 		// Search for the file in the current folder
-		query := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false",
-			escapeQuery(part), currentID)
+		query := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false", escapeQuery(part), currentID)
 
 		fileList, err := d.service.Files.List().
 			Context(ctx).
+			SupportsAllDrives(true).
+			IncludeItemsFromAllDrives(true).
 			Q(query).
-			Fields("files(id, name, mimeType)").
-			PageSize(1).
+			Fields("files(id,name,mimeType)").
 			Do()
 		if err != nil {
 			return "", err
@@ -184,36 +192,22 @@ func (d *DriveFS) resolveFileIDFromPath(ctx context.Context, path []string) (id 
 }
 
 // listDir lists the contents of a directory.
-func (d *DriveFS) listDir(ctx context.Context, folderID string) ([]fs.DirEntry, error) {
-	var entries []fs.DirEntry
-	var pageToken string
-
-	for {
-		query := fmt.Sprintf("'%s' in parents and trashed = false", folderID)
-		call := d.service.Files.List().
-			Context(ctx).
-			Q(query).
-			Fields("nextPageToken, files(id, name, mimeType, size, modifiedTime)").
-			OrderBy("name").
-			PageSize(100)
-
-		if pageToken != "" {
-			call = call.PageToken(pageToken)
-		}
-
-		fileList, err := call.Do()
-		if err != nil {
-			return nil, err
-		}
-
-		for _, f := range fileList.Files {
-			entries = append(entries, &DriveDirEntry{file: f})
-		}
-
-		pageToken = fileList.NextPageToken
-		if pageToken == "" {
-			break
-		}
+func (d *DriveFS) listDir(ctx context.Context, folderID string) (entries []fs.DirEntry, err error) {
+	query := fmt.Sprintf("'%s' in parents and trashed = false", folderID)
+	err = d.service.Files.List().
+		Context(ctx).
+		SupportsAllDrives(true).
+		IncludeItemsFromAllDrives(true).
+		Q(query).
+		Fields("nextPageToken,files(id,name,mimeType,size,modifiedTime)").
+		Pages(ctx, func(page *drive.FileList) error {
+			for _, file := range page.Files {
+				entries = append(entries, &DriveDirEntry{file: file})
+			}
+			return nil
+		})
+	if err != nil {
+		return nil, err
 	}
 
 	return entries, nil
@@ -235,6 +229,13 @@ func (d *DriveFS) openDir(ctx context.Context, file *drive.File) (*DriveDir, err
 // openFile opens a file for reading.
 // Note: This method loads the entire file content into memory.
 func (d *DriveFS) openFile(ctx context.Context, file *drive.File) (*DriveFile, error) {
+	if strings.HasPrefix(file.MimeType, MimeTypePrefixGoogleApps) {
+		return &DriveFile{
+			file:    file,
+			content: bytes.NewReader(nil),
+		}, nil
+	}
+
 	// Download file content
 	resp, err := d.service.Files.Get(file.Id).
 		Context(ctx).
@@ -257,8 +258,8 @@ func (d *DriveFS) openFile(ctx context.Context, file *drive.File) (*DriveFile, e
 
 // escapeQuery escapes special characters in a query string.
 func escapeQuery(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "'", `\'`)
 	return s
 }
 

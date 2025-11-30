@@ -2,6 +2,7 @@ package drivefs
 
 import (
 	"io/fs"
+	"strings"
 	"time"
 
 	"google.golang.org/api/drive/v3"
@@ -29,9 +30,12 @@ func (fi *DriveFileInfo) Size() int64 {
 // Mode returns the file mode bits.
 func (fi *DriveFileInfo) Mode() fs.FileMode {
 	if fi.IsDir() {
-		return fs.ModeDir | 0444
+		return fs.ModeDir
 	}
-	return 0444
+	if strings.HasPrefix(fi.file.MimeType, MimeTypePrefixGoogleApps) {
+		return fs.ModeIrregular
+	}
+	return 0
 }
 
 // ModTime returns the modification time.
@@ -41,7 +45,7 @@ func (fi *DriveFileInfo) ModTime() time.Time {
 
 // IsDir reports whether the file is a directory.
 func (fi *DriveFileInfo) IsDir() bool {
-	return fi.file.MimeType == "application/vnd.google-apps.folder"
+	return fi.file.MimeType == MimeTypeDriveGoogleAppsFolder
 }
 
 // Sys returns the underlying data source (*drive.File).

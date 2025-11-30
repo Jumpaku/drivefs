@@ -22,7 +22,7 @@ func (e *DriveDirEntry) Name() string {
 
 // IsDir reports whether the entry is a directory.
 func (e *DriveDirEntry) IsDir() bool {
-	return e.file.MimeType == "application/vnd.google-apps.folder"
+	return e.file.MimeType == MimeTypeDriveGoogleAppsFolder
 }
 
 // Type returns the file mode bits.
