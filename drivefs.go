@@ -24,7 +24,6 @@ const MimeTypePrefixGoogleApps = "application/vnd.google-apps."
 
 // DriveFS implements fs.FS for Google Drive.
 // It provides a read-only filesystem view of Google Drive contents.
-// Note: DriveFS instances created with WithDriveID share the same service with the original.
 type DriveFS struct {
 	service *drive.Service
 	rootID  string // ID of the root folder (default: "root")
