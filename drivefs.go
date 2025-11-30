@@ -23,10 +23,10 @@ import (
 
 // DriveFS implements fs.FS for Google Drive.
 // It provides a read-only filesystem view of Google Drive contents.
-// Note: DriveFS instances created with WithRootID share the same service with the original.
+// Note: DriveFS instances created with WithDriveID share the same service with the original.
 type DriveFS struct {
 	service *drive.Service
-	rootID  string // ID of the root folder (default: "root")
+	driveID string // ID of the root folder (default: "root")
 }
 
 // Verify interface implementations at compile time.
@@ -40,16 +40,16 @@ var (
 func New(service *drive.Service) *DriveFS {
 	return &DriveFS{
 		service: service,
-		rootID:  "root",
+		driveID: "",
 	}
 }
 
-// WithRootID returns a copy of DriveFS with a different root folder ID.
+// WithDriveID returns a copy of DriveFS with a different root folder ID.
 // Note: The returned DriveFS shares the same service with the original.
-func (dfs *DriveFS) WithRootID(rootID string) *DriveFS {
+func (dfs *DriveFS) WithDriveID(driveID string) *DriveFS {
 	return &DriveFS{
 		service: dfs.service,
-		rootID:  rootID,
+		driveID: driveID,
 	}
 }
 
@@ -61,14 +61,10 @@ func (dfs *DriveFS) Open(name string) (fs.File, error) {
 }
 
 // OpenContext opens the named file from Google Drive with the given context.
-// The name must be an absolute path (cannot be ".").
+// The name must be an absolute path (must start with '/') and must not contain
+// any '.' or '..' components.
 func (dfs *DriveFS) OpenContext(ctx context.Context, name string) (fs.File, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
-	}
-
-	// Reject relative path "." - only absolute paths are allowed
-	if name == "." {
+	if err := validateAbsolutePath(name); err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
 	}
 
@@ -97,7 +93,8 @@ func (dfs *DriveFS) OpenContext(ctx context.Context, name string) (fs.File, erro
 
 // ReadDir reads the named directory and returns a list of directory entries
 // using a background context.
-// The name must be an absolute path (cannot be ".").
+// The name must be an absolute path (must start with '/') and must not contain
+// any '.' or '..' components.
 // For context control, use ReadDirContext instead.
 func (dfs *DriveFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	return dfs.ReadDirContext(context.Background(), name)
@@ -105,14 +102,10 @@ func (dfs *DriveFS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 // ReadDirContext reads the named directory and returns a list of directory entries
 // with the given context.
-// The name must be an absolute path (cannot be ".").
+// The name must be an absolute path (must start with '/') and must not contain
+// any '.' or '..' components.
 func (dfs *DriveFS) ReadDirContext(ctx context.Context, name string) ([]fs.DirEntry, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
-	}
-
-	// Reject relative path "." - only absolute paths are allowed
-	if name == "." {
+	if err := validateAbsolutePath(name); err != nil {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
 	}
 
@@ -131,11 +124,18 @@ func (dfs *DriveFS) ReadDirContext(ctx context.Context, name string) ([]fs.DirEn
 
 // resolvePathContext resolves a path to a Google Drive file ID.
 func (dfs *DriveFS) resolvePathContext(ctx context.Context, name string) (string, error) {
+	// If root is requested, return the root drive ID directly
+	currentID := dfs.driveID
+	if name == "/" {
+		return currentID, nil
+	}
+
+	// Split on '/' (paths are absolute, so the first element will be empty)
 	parts := strings.Split(name, "/")
-	currentID := dfs.rootID
 
 	for _, part := range parts {
-		if part == "" || part == "." {
+		if part == "" {
+			// skip empty parts (leading slash)
 			continue
 		}
 
@@ -161,6 +161,38 @@ func (dfs *DriveFS) resolvePathContext(ctx context.Context, name string) (string
 	}
 
 	return currentID, nil
+}
+
+// validateAbsolutePath ensures the provided path is absolute (starts with '/')
+// and does not contain any relative components like '.' or '..' or empty segments
+// (except the leading empty segment caused by the starting '/'). The root path
+// of "/" is considered valid.
+func validateAbsolutePath(name string) error {
+	if name == "" {
+		return fmt.Errorf("empty path")
+	}
+	if !strings.HasPrefix(name, "/") {
+		return fmt.Errorf("path must be absolute and start with '/'")
+	}
+	if name == "/" {
+		return nil
+	}
+
+	parts := strings.Split(name, "/")
+	for i, p := range parts {
+		if i == 0 {
+			// leading empty element caused by the initial '/'
+			continue
+		}
+		if p == "" {
+			// disallow '//' anywhere in the path
+			return fmt.Errorf("invalid empty path element")
+		}
+		if p == "." || p == ".." {
+			return fmt.Errorf("relative path components are not allowed")
+		}
+	}
+	return nil
 }
 
 // listDirContext lists the contents of a directory.
@@ -309,7 +341,7 @@ func (d *DriveDir) Stat() (fs.FileInfo, error) {
 }
 
 // Read returns an error because directories cannot be read.
-func (d *DriveDir) Read(b []byte) (int, error) {
+func (d *DriveDir) Read([]byte) (int, error) {
 	return 0, &fs.PathError{Op: "read", Path: d.name, Err: fs.ErrInvalid}
 }
 
