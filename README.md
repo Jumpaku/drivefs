@@ -45,17 +45,29 @@ func main() {
 	ctx := context.Background()
 
 	// Create a drive.Service (authentication setup required)
+	// Example: Load credentials from a JSON file
+	// creds, err := google.CredentialsFromJSON(ctx, jsonContent, drive.DriveReadonlyScope)
+	// if err != nil {
+	//     log.Fatal(err)
+	// }
 	// See: https://developers.google.com/drive/api/v3/quickstart/go
-	service, err := drive.NewService(ctx, option.WithCredentials(yourCredentials))
+	service, err := drive.NewService(ctx, option.WithCredentials(creds))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Create a new DriveFS instance
-	driveFS := drivefs.New(ctx, service)
+	driveFS := drivefs.New(service)
 
-	// Open a file
+	// Open a file (uses background context)
 	file, err := driveFS.Open("path/to/file.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	// Or use OpenContext for context control
+	file, err = driveFS.OpenContext(ctx, "path/to/file.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -85,7 +97,7 @@ By default, `DriveFS` uses the user's root folder ("My Drive"). You can specify 
 
 ```go
 // Use a specific folder as the root
-driveFS := drivefs.New(ctx, service).WithRootID("your-folder-id")
+driveFS := drivefs.New(service).WithRootID("your-folder-id")
 ```
 
 ## API Reference
@@ -94,10 +106,12 @@ driveFS := drivefs.New(ctx, service).WithRootID("your-folder-id")
 
 The main filesystem type that implements `fs.FS` and `fs.ReadDirFS`.
 
-- `New(ctx context.Context, service *drive.Service) *DriveFS` - Creates a new DriveFS instance
-- `WithRootID(rootID string) *DriveFS` - Returns a copy with a different root folder ID
-- `Open(name string) (fs.File, error)` - Opens a file or directory
-- `ReadDir(name string) ([]fs.DirEntry, error)` - Reads directory contents
+- `New(service *drive.Service) *DriveFS` - Creates a new DriveFS instance
+- `WithRootID(rootID string) *DriveFS` - Returns a copy with a different root folder ID (shares the same service)
+- `Open(name string) (fs.File, error)` - Opens a file or directory (uses background context)
+- `OpenContext(ctx context.Context, name string) (fs.File, error)` - Opens a file or directory with context
+- `ReadDir(name string) ([]fs.DirEntry, error)` - Reads directory contents (uses background context)
+- `ReadDirContext(ctx context.Context, name string) ([]fs.DirEntry, error)` - Reads directory contents with context
 
 ### DriveFile
 

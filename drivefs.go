@@ -1,6 +1,10 @@
 // Package drivefs provides a read-only filesystem interface for Google Drive.
 // It implements standard Go filesystem interfaces (fs.FS, fs.File, fs.DirEntry, fs.FileInfo)
 // for accessing Google Drive contents using the google.golang.org/api/drive/v3 package.
+//
+// Note: The openFile method loads entire file content into memory. This can be problematic
+// for large files as it may consume excessive memory. This limitation should be considered
+// when working with large files.
 package drivefs
 
 import (
@@ -11,6 +15,7 @@ import (
 	"io/fs"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/api/drive/v3"
@@ -18,9 +23,9 @@ import (
 
 // DriveFS implements fs.FS for Google Drive.
 // It provides a read-only filesystem view of Google Drive contents.
+// Note: DriveFS instances created with WithRootID share the same service with the original.
 type DriveFS struct {
 	service *drive.Service
-	ctx     context.Context
 	rootID  string // ID of the root folder (default: "root")
 }
 
@@ -32,44 +37,50 @@ var (
 
 // New creates a new DriveFS instance with the given drive.Service.
 // The service should be authenticated with appropriate scopes for reading files.
-func New(ctx context.Context, service *drive.Service) *DriveFS {
+func New(service *drive.Service) *DriveFS {
 	return &DriveFS{
 		service: service,
-		ctx:     ctx,
 		rootID:  "root",
 	}
 }
 
 // WithRootID returns a copy of DriveFS with a different root folder ID.
+// Note: The returned DriveFS shares the same service with the original.
 func (dfs *DriveFS) WithRootID(rootID string) *DriveFS {
 	return &DriveFS{
 		service: dfs.service,
-		ctx:     dfs.ctx,
 		rootID:  rootID,
 	}
 }
 
-// Open opens the named file from Google Drive.
-// The name should be a slash-separated path relative to the root folder.
+// Open opens the named file from Google Drive using a background context.
+// The name must be an absolute path (cannot be ".").
+// For context control, use OpenContext instead.
 func (dfs *DriveFS) Open(name string) (fs.File, error) {
+	return dfs.OpenContext(context.Background(), name)
+}
+
+// OpenContext opens the named file from Google Drive with the given context.
+// The name must be an absolute path (cannot be ".").
+func (dfs *DriveFS) OpenContext(ctx context.Context, name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
 	}
 
-	// Handle root directory
+	// Reject relative path "." - only absolute paths are allowed
 	if name == "." {
-		return dfs.openDir(dfs.rootID, ".")
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
 	}
 
 	// Resolve the path to a file ID
-	fileID, err := dfs.resolvePath(name)
+	fileID, err := dfs.resolvePathContext(ctx, name)
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
 
 	// Get file metadata
 	file, err := dfs.service.Files.Get(fileID).
-		Context(dfs.ctx).
+		Context(ctx).
 		Fields("id, name, mimeType, size, modifiedTime, createdTime").
 		Do()
 	if err != nil {
@@ -78,34 +89,48 @@ func (dfs *DriveFS) Open(name string) (fs.File, error) {
 
 	// Check if it's a directory (folder)
 	if file.MimeType == "application/vnd.google-apps.folder" {
-		return dfs.openDir(fileID, name)
+		return dfs.openDirContext(ctx, fileID, name)
 	}
 
-	return dfs.openFile(file, name)
+	return dfs.openFileContext(ctx, file, name)
 }
 
-// ReadDir reads the named directory and returns a list of directory entries.
+// ReadDir reads the named directory and returns a list of directory entries
+// using a background context.
+// The name must be an absolute path (cannot be ".").
+// For context control, use ReadDirContext instead.
 func (dfs *DriveFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	return dfs.ReadDirContext(context.Background(), name)
+}
+
+// ReadDirContext reads the named directory and returns a list of directory entries
+// with the given context.
+// The name must be an absolute path (cannot be ".").
+func (dfs *DriveFS) ReadDirContext(ctx context.Context, name string) ([]fs.DirEntry, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
 	}
 
-	var folderID string
+	// Reject relative path "." - only absolute paths are allowed
 	if name == "." {
-		folderID = dfs.rootID
-	} else {
-		var err error
-		folderID, err = dfs.resolvePath(name)
-		if err != nil {
-			return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
-		}
+		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
 	}
 
-	return dfs.listDir(folderID)
+	folderID, err := dfs.resolvePathContext(ctx, name)
+	if err != nil {
+		return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
+	}
+
+	entries, err := dfs.listDirContext(ctx, folderID)
+	if err != nil {
+		return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
+	}
+
+	return entries, nil
 }
 
-// resolvePath resolves a path to a Google Drive file ID.
-func (dfs *DriveFS) resolvePath(name string) (string, error) {
+// resolvePathContext resolves a path to a Google Drive file ID.
+func (dfs *DriveFS) resolvePathContext(ctx context.Context, name string) (string, error) {
 	parts := strings.Split(name, "/")
 	currentID := dfs.rootID
 
@@ -119,7 +144,7 @@ func (dfs *DriveFS) resolvePath(name string) (string, error) {
 			escapeQuery(part), currentID)
 
 		fileList, err := dfs.service.Files.List().
-			Context(dfs.ctx).
+			Context(ctx).
 			Q(query).
 			Fields("files(id, name, mimeType)").
 			PageSize(1).
@@ -138,15 +163,15 @@ func (dfs *DriveFS) resolvePath(name string) (string, error) {
 	return currentID, nil
 }
 
-// listDir lists the contents of a directory.
-func (dfs *DriveFS) listDir(folderID string) ([]fs.DirEntry, error) {
+// listDirContext lists the contents of a directory.
+func (dfs *DriveFS) listDirContext(ctx context.Context, folderID string) ([]fs.DirEntry, error) {
 	var entries []fs.DirEntry
 	var pageToken string
 
 	for {
 		query := fmt.Sprintf("'%s' in parents and trashed = false", folderID)
 		call := dfs.service.Files.List().
-			Context(dfs.ctx).
+			Context(ctx).
 			Q(query).
 			Fields("nextPageToken, files(id, name, mimeType, size, modifiedTime)").
 			OrderBy("name").
@@ -174,11 +199,11 @@ func (dfs *DriveFS) listDir(folderID string) ([]fs.DirEntry, error) {
 	return entries, nil
 }
 
-// openDir opens a directory for reading.
-func (dfs *DriveFS) openDir(folderID, name string) (*DriveDir, error) {
-	entries, err := dfs.listDir(folderID)
+// openDirContext opens a directory for reading.
+func (dfs *DriveFS) openDirContext(ctx context.Context, folderID, name string) (*DriveDir, error) {
+	entries, err := dfs.listDirContext(ctx, folderID)
 	if err != nil {
-		return nil, err
+		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
 
 	return &DriveDir{
@@ -187,14 +212,15 @@ func (dfs *DriveFS) openDir(folderID, name string) (*DriveDir, error) {
 	}, nil
 }
 
-// openFile opens a file for reading.
-func (dfs *DriveFS) openFile(file *drive.File, name string) (*DriveFile, error) {
+// openFileContext opens a file for reading.
+// Note: This method loads the entire file content into memory.
+func (dfs *DriveFS) openFileContext(ctx context.Context, file *drive.File, name string) (*DriveFile, error) {
 	// Download file content
 	resp, err := dfs.service.Files.Get(file.Id).
-		Context(dfs.ctx).
+		Context(ctx).
 		Download()
 	if err != nil {
-		return nil, err
+		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -203,7 +229,10 @@ func (dfs *DriveFS) openFile(file *drive.File, name string) (*DriveFile, error) 
 		return nil, &fs.PathError{Op: "read", Path: name, Err: err}
 	}
 
-	modTime, _ := time.Parse(time.RFC3339, file.ModifiedTime)
+	modTime, err := time.Parse(time.RFC3339, file.ModifiedTime)
+	if err != nil {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fmt.Errorf("invalid modification time: %w", err)}
+	}
 
 	return &DriveFile{
 		name:    path.Base(name),
@@ -252,10 +281,12 @@ func (f *DriveFile) Close() error {
 }
 
 // DriveDir implements fs.File and fs.ReadDirFile for a Google Drive directory.
+// Note: DriveDir is not safe for concurrent use from multiple goroutines.
 type DriveDir struct {
 	name    string
 	entries []fs.DirEntry
 	offset  int
+	mu      sync.Mutex
 }
 
 // Verify interface implementations at compile time.
@@ -284,6 +315,9 @@ func (d *DriveDir) Close() error {
 
 // ReadDir reads the directory entries.
 func (d *DriveDir) ReadDir(n int) ([]fs.DirEntry, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	if n <= 0 {
 		entries := d.entries[d.offset:]
 		d.offset = len(d.entries)
