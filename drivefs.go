@@ -336,7 +336,10 @@ func (e *DriveDirEntry) Type() fs.FileMode {
 
 // Info returns the file info.
 func (e *DriveDirEntry) Info() (fs.FileInfo, error) {
-	modTime, _ := time.Parse(time.RFC3339, e.file.ModifiedTime)
+	modTime, err := time.Parse(time.RFC3339, e.file.ModifiedTime)
+	if err != nil {
+		return nil, fmt.Errorf("invalid modification time for file %q: %w", e.file.Name, err)
+	}
 	return &DriveFileInfo{
 		name:    e.file.Name,
 		size:    e.file.Size,
