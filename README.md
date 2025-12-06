@@ -47,7 +47,6 @@ func main() {
 	}
 
 	// Create a new DriveFS instance with a root folder ID
-	// Use "root" for the user's root folder ("My Drive")
 	driveFS := drivefs.New(service, "root")
 
 	// Create a directory structure
