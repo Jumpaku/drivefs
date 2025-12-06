@@ -185,6 +185,31 @@ func (s *DriveFS) Stat(fileID FileID) (info FileInfo, err error) {
 	return newFileInfo(f)
 }
 
+// Copy creates a copy of the file with the given fileID in the specified new parent directory with the provided new name.
+func (s *DriveFS) Copy(fileID, newParentID FileID, newName string) (info FileInfo, err error) {
+	f, err := s.service.Files.Copy(string(fileID), &drive.File{
+		Name:    newName,
+		Parents: []string{string(newParentID)},
+	}).
+		SupportsAllDrives(true).
+		Do()
+	if err != nil {
+		return FileInfo{}, newDriveError("failed to copy file", err)
+	}
+	return newFileInfo(f)
+}
+
+// Rename renames the file with the given fileID to the specified new name.
+func (s *DriveFS) Rename(fileID FileID, newName string) (info FileInfo, err error) {
+	f, err := s.service.Files.Update(string(fileID), &drive.File{Name: newName}).
+		SupportsAllDrives(true).
+		Do()
+	if err != nil {
+		return FileInfo{}, newDriveError("failed to copy file", err)
+	}
+	return newFileInfo(f)
+}
+
 // ResolveFileID resolves the given path relative to the root directory and returns the corresponding FileInfo.
 func (s *DriveFS) ResolveFileID(path Path) (info FileInfo, err error) {
 	parts, err := validateAndSplitPath(string(path))
