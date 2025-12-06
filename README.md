@@ -99,11 +99,25 @@ func main() {
 	}
 	fmt.Printf("Path: %s\n", path)
 
-	// Move a file to a different directory
+	// Copy a file to a different directory
 	newParentInfo, err := driveFS.MkdirAll("/new/location")
 	if err != nil {
 		log.Fatal(err)
 	}
+	copiedFileInfo, err := driveFS.Copy(fileInfo.ID, newParentInfo.ID, "example_copy.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Copied file: %s (ID: %s)\n", copiedFileInfo.Name, copiedFileInfo.ID)
+
+	// Rename a file
+	renamedFileInfo, err := driveFS.Rename(fileInfo.ID, "renamed_example.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Renamed file: %s\n", renamedFileInfo.Name)
+
+	// Move a file to a different directory
 	err = driveFS.Move(fileInfo.ID, newParentInfo.ID)
 	if err != nil {
 		log.Fatal(err)
@@ -125,7 +139,7 @@ The main type for interacting with Google Drive.
 
 #### Constructor
 
-- `New(service *drive.Service, rootID FileID) *DriveFS` - Creates a new DriveFS instance with the specified root folder ID. Use `"root"` for the user's root folder ("My Drive").
+- `New(service *drive.Service, rootID FileID) *DriveFS` - Creates a new DriveFS instance with the specified root folder ID.
 
 #### Directory Operations
 
@@ -147,6 +161,8 @@ The main type for interacting with Google Drive.
 
 #### File System Manipulation
 
+- `Copy(fileID, newParentID FileID, newName string) (FileInfo, error)` - Creates a copy of the file in the specified new parent directory with the provided new name.
+- `Rename(fileID FileID, newName string) (FileInfo, error)` - Renames the file to the specified new name.
 - `Move(fileID, newParentID FileID) error` - Moves a file or directory to a new parent directory.
 - `Remove(fileID FileID, trash bool) error` - Removes a file or empty directory. If `trash` is true, the item is moved to trash; otherwise, it is permanently deleted. Returns an error if trying to remove a non-empty directory.
 - `RemoveAll(fileID FileID, trash bool) error` - Removes a file or directory and all its contents. If `trash` is true, items are moved to trash; otherwise, they are permanently deleted.
