@@ -16,11 +16,6 @@ import (
 type FileID string
 type Path string
 
-const driveFileFields = "parents,id,name,mimeType,size,modifiedTime"
-const driveFilesFields = "nextPageToken,files(parents,id,name,mimeType,size,modifiedTime)"
-const mimeTypeGoogleAppFolder = "application/vnd.google-apps.folder"
-const mimeTypePrefixGoogleApp = "application/vnd.google-apps."
-
 type DriveFS struct {
 	service *drive.Service
 	rootID  string
@@ -57,7 +52,7 @@ func (s *DriveFS) MkdirAll(path Path) (info FileInfo, err error) {
 		return FileInfo{}, fmt.Errorf("root not found: %s: %w", currentID, ErrNotExist)
 	}
 	for _, p := range parts {
-		file, found, err = findIn(s, currentID, p)
+		file, found, err = findByNameIn(s, currentID, p)
 		if err != nil {
 			return FileInfo{}, fmt.Errorf("failed to find directory '%s' in '%s': %w", p, currentID, err)
 		}
@@ -65,7 +60,7 @@ func (s *DriveFS) MkdirAll(path Path) (info FileInfo, err error) {
 			currentID = file.Id
 			continue
 		}
-		file, err = createDir(s, currentID, p)
+		file, err = createDirIn(s, currentID, p)
 		if err != nil {
 			return FileInfo{}, fmt.Errorf("failed to create directory '%s' in '%s': %w", p, currentID, err)
 		}
@@ -76,7 +71,7 @@ func (s *DriveFS) MkdirAll(path Path) (info FileInfo, err error) {
 
 // Mkdir creates a directory with the given name and returns the ID of the created directory.
 func (s *DriveFS) Mkdir(parentID FileID, name string) (info FileInfo, err error) {
-	f, err := createDir(s, string(parentID), name)
+	f, err := createDirIn(s, string(parentID), name)
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("failed to create directory: %w", err)
 	}
@@ -175,7 +170,7 @@ func (s *DriveFS) ReadDir(fileID FileID) (children []FileInfo, err error) {
 
 // Create creates a new file at the specified parent directory with the given name.
 func (s *DriveFS) Create(parentID FileID, name string) (info FileInfo, err error) {
-	f, found, err := findIn(s, string(parentID), name)
+	f, found, err := findByNameIn(s, string(parentID), name)
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("failed to find parent directory '%s': %w", parentID, err)
 	}
@@ -185,7 +180,7 @@ func (s *DriveFS) Create(parentID FileID, name string) (info FileInfo, err error
 		}
 		return newFileInfo(f)
 	} else {
-		f, err := createFile(s, string(parentID), name)
+		f, err := createFileIn(s, string(parentID), name)
 		if err != nil {
 			return FileInfo{}, fmt.Errorf("failed to create file: %w", err)
 		}
@@ -220,7 +215,7 @@ func (s *DriveFS) ResolveFileID(path Path) (info FileInfo, err error) {
 		return FileInfo{}, fmt.Errorf("root directory not found: %s: %w", currentID, ErrNotExist)
 	}
 	for _, p := range parts {
-		file, found, err = findIn(s, currentID, p)
+		file, found, err = findByNameIn(s, currentID, p)
 		if err != nil {
 			return FileInfo{}, err
 		}
@@ -319,7 +314,12 @@ func escapeQuery(s string) string {
 	return s
 }
 
-func findIn(s *DriveFS, parentID string, name string) (file *drive.File, found bool, err error) {
+const (
+	driveFileFields  = "parents,id,name,mimeType,size,modifiedTime"
+	driveFilesFields = "nextPageToken,files(parents,id,name,mimeType,size,modifiedTime)"
+)
+
+func findByNameIn(s *DriveFS, parentID string, name string) (file *drive.File, found bool, err error) {
 	q := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false", escapeQuery(name), parentID)
 	res, err := s.service.Files.List().
 		SupportsAllDrives(true).
@@ -343,7 +343,7 @@ func existsIn(s *DriveFS, parentID string) (found bool, err error) {
 		SupportsAllDrives(true).
 		IncludeItemsFromAllDrives(true).
 		Q(q).
-		Fields(googleapi.Field(fmt.Sprintf("files(%s)", driveFileFields))).
+		Fields(driveFileFields).
 		PageSize(1).
 		Do()
 	if err != nil {
@@ -386,7 +386,7 @@ func findAllIn(s *DriveFS, parentID string) (files []*drive.File, err error) {
 	return files, nil
 }
 
-func createDir(s *DriveFS, parentID, name string) (file *drive.File, err error) {
+func createDirIn(s *DriveFS, parentID, name string) (file *drive.File, err error) {
 	file, err = s.service.Files.Create(&drive.File{
 		Name:     name,
 		MimeType: mimeTypeGoogleAppFolder,
@@ -400,7 +400,7 @@ func createDir(s *DriveFS, parentID, name string) (file *drive.File, err error) 
 	return file, nil
 }
 
-func createFile(s *DriveFS, parentID, name string) (file *drive.File, err error) {
+func createFileIn(s *DriveFS, parentID, name string) (file *drive.File, err error) {
 	file, err = s.service.Files.Create(&drive.File{
 		Name:    name,
 		Parents: []string{parentID},
@@ -422,7 +422,7 @@ func downloadFile(s *DriveFS, fileID string) (data []byte, err error) {
 	}
 
 	if strings.HasPrefix(file.MimeType, mimeTypePrefixGoogleApp) {
-		return nil, fmt.Errorf("cannot download google-apps file")
+		return nil, fmt.Errorf("cannot download google-apps file: %w", ErrNotReadable)
 	}
 
 	resp, err := s.service.Files.Get(fileID).
@@ -432,7 +432,11 @@ func downloadFile(s *DriveFS, fileID string) (data []byte, err error) {
 		return nil, newDriveError("failed to download file", err)
 	}
 	defer func() {
-		err = errors.Join(err, resp.Body.Close())
+		closeErr := resp.Body.Close()
+		if closeErr != nil {
+			closeErr = newIOError("failed to close file body", closeErr)
+		}
+		err = errors.Join(err, closeErr)
 	}()
 
 	data, err = io.ReadAll(resp.Body)

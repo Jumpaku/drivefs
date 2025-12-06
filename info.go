@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+const (
+	mimeTypeGoogleAppFolder = "application/vnd.google-apps.folder"
+	mimeTypePrefixGoogleApp = "application/vnd.google-apps."
+)
+
 type FileInfo struct {
 	Name    string
 	ID      string
