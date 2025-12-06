@@ -212,7 +212,8 @@ func (s *DriveFS) ResolveFileID(path Path) (info FileInfo, err error) {
 	return newFileInfo(file)
 }
 
-// ResolvePath returns the Path for the given fileID.
+// ResolvePath returns the absolute path from the root directory to the file with the given fileID.
+// The returned path is a slash-separated string (e.g., "/folder/subfolder/file").
 func (s *DriveFS) ResolvePath(fileID FileID) (path Path, err error) {
 	currentID := string(fileID)
 	var parts []string
