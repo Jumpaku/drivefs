@@ -132,7 +132,7 @@ func (s *DriveFS) Move(fileID, newParentID FileID) (err error) {
 	return nil
 }
 
-// WriteFile writes the provided data to the specified path. If the file exists, it will be overwritten. Returns an error on failure.
+// WriteFile writes the provided data to the file with the given fileID. If the file exists, it will be overwritten. Returns an error on failure.
 func (s *DriveFS) WriteFile(fileID FileID, data []byte) (err error) {
 	return uploadFile(s, string(fileID), data)
 }
