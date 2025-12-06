@@ -173,7 +173,7 @@ func (s *DriveFS) Create(parentID FileID, name string) (info FileInfo, err error
 	}
 }
 
-// Stat returns the FileInfo for the given path.
+// Stat returns the FileInfo for the file with the given fileID.
 func (s *DriveFS) Stat(fileID FileID) (info FileInfo, err error) {
 	f, found, err := findByID(s, string(fileID))
 	if err != nil {
