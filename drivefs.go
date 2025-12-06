@@ -185,7 +185,7 @@ func (s *DriveFS) Stat(fileID FileID) (info FileInfo, err error) {
 	return newFileInfo(f)
 }
 
-// ResolveFileID returns the FileID for the given path.
+// ResolveFileID resolves the given path relative to the root directory and returns the corresponding FileInfo.
 func (s *DriveFS) ResolveFileID(path Path) (info FileInfo, err error) {
 	parts, err := validateAndSplitPath(string(path))
 	if err != nil {
