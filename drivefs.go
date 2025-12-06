@@ -91,7 +91,7 @@ func (s *DriveFS) Remove(fileID FileID, trash bool) (err error) {
 	return s.RemoveAll(fileID, trash)
 }
 
-// RemoveAll moves all files and directories under the specified path to the trash.
+// RemoveAll moves the file or directory with the given fileID to the trash or deletes it permanently.
 func (s *DriveFS) RemoveAll(fileID FileID, trash bool) (err error) {
 	if trash {
 		_, err := s.service.Files.Update(string(fileID), &drive.File{Trashed: true}).
