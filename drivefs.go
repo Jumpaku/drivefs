@@ -69,7 +69,7 @@ func (s *DriveFS) ReadFile(fileID FileID) (data []byte, err error) {
 	return downloadFile(s, string(fileID))
 }
 
-// Remove moves the file or directory at path to the trash.
+// Remove moves the file or directory with the given fileID to the trash.
 func (s *DriveFS) Remove(fileID FileID, trash bool) (err error) {
 	file, found, err := findByID(s, string(fileID))
 	if err != nil {
