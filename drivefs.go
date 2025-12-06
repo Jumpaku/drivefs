@@ -360,7 +360,7 @@ func findByID(s *DriveFS, fileID string) (file *drive.File, found bool, err erro
 				return nil, false, nil
 			}
 		}
-		return nil, true, newDriveError("failed to get files", err)
+		return nil, false, newDriveError("failed to get files", err)
 	}
 	return file, true, nil
 }
