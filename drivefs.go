@@ -64,7 +64,7 @@ func (s *DriveFS) Mkdir(parentID FileID, name string) (info FileInfo, err error)
 	return newFileInfo(f)
 }
 
-// ReadFile reads the file with the given path and returns its contents as a byte slice.
+// ReadFile reads the file with the given fileID and returns its contents as a byte slice.
 func (s *DriveFS) ReadFile(fileID FileID) (data []byte, err error) {
 	return downloadFile(s, string(fileID))
 }
