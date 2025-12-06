@@ -3,20 +3,11 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/Jumpaku/drivefs.svg)](https://pkg.go.dev/github.com/Jumpaku/drivefs)
 [![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD_2--Clause-blue.svg)](https://opensource.org/licenses/BSD-2-Clause)
 
-A Go module that implements standard Go filesystem interfaces for Google Drive.
+A Go module that provides a simple API wrapper for Google Drive operations.
 
 ## Overview
 
-`drivefs` provides a read-only filesystem interface for accessing Google Drive contents using the standard Go `fs` package interfaces. It wraps the `google.golang.org/api/drive/v3` package to offer a familiar filesystem-like experience.
-
-### Implemented Interfaces
-
-- `fs.FS` - Filesystem interface for opening files
-- `fs.ReadDirFS` - Interface for reading directory contents
-- `fs.File` - Interface for file operations (read, stat, close)
-- `fs.ReadDirFile` - Interface for reading directory entries
-- `fs.DirEntry` - Interface for directory entry information
-- `fs.FileInfo` - Interface for file metadata
+`drivefs` provides a convenient Go API for managing files and directories in Google Drive. It wraps the `google.golang.org/api/drive/v3` package and supports operations like creating, reading, writing, moving, and deleting files and directories.
 
 ## Installation
 
@@ -32,7 +23,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 
 	"github.com/Jumpaku/drivefs"
@@ -46,7 +36,7 @@ func main() {
 
 	// Create a drive.Service (authentication setup required)
 	// Example: Load credentials from a JSON file
-	// creds, err := google.CredentialsFromJSON(ctx, jsonContent, drive.DriveReadonlyScope)
+	// creds, err := google.CredentialsFromJSON(ctx, jsonContent, drive.DriveScope)
 	// if err != nil {
 	//     log.Fatal(err)
 	// }
@@ -56,98 +46,147 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Create a new DriveFS instance
-	driveFS := drivefs.New(service)
+	// Create a new DriveFS instance with a root folder ID
+	// Use "root" for the user's root folder ("My Drive")
+	driveFS := drivefs.New(service, "root")
 
-	// Open a file (uses background context)
-	file, err := driveFS.Open("path/to/file.txt")
+	// Create a directory structure
+	dirInfo, err := driveFS.MkdirAll("/path/to/directory")
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer file.Close()
+	fmt.Printf("Created directory: %s (ID: %s)\n", dirInfo.Name, dirInfo.ID)
 
-	// Or use OpenContext for context control
-	file, err = driveFS.OpenContext(ctx, "path/to/file.txt")
+	// Create a file in the directory
+	fileInfo, err := driveFS.Create(dirInfo.ID, "example.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer file.Close()
 
-	// Read file contents
-	content, err := io.ReadAll(file)
+	// Write content to the file
+	err = driveFS.WriteFile(fileInfo.ID, []byte("Hello, Google Drive!"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(string(content))
 
-	// Read directory contents
-	entries, err := driveFS.ReadDir("path/to/directory")
+	// Read the file content
+	data, err := driveFS.ReadFile(fileInfo.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(data))
+
+	// List directory contents
+	entries, err := driveFS.ReadDir(dirInfo.ID)
 	if err != nil {
 		log.Fatal(err)
 	}
 	for _, entry := range entries {
-		fmt.Printf("%s (dir: %v)\n", entry.Name(), entry.IsDir())
+		fmt.Printf("%s (folder: %v, ID: %s)\n", entry.Name, entry.IsFolder(), entry.ID)
+	}
+
+	// Resolve a path to get FileInfo
+	resolvedInfo, err := driveFS.ResolveFileID("/path/to/directory/example.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Resolved: %s\n", resolvedInfo.Name)
+
+	// Get the full path from a file ID
+	path, err := driveFS.ResolvePath(fileInfo.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Path: %s\n", path)
+
+	// Move a file to a different directory
+	newParentInfo, err := driveFS.MkdirAll("/new/location")
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = driveFS.Move(fileInfo.ID, newParentInfo.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Delete a file (move to trash)
+	err = driveFS.Remove(fileInfo.ID, true)
+	if err != nil {
+		log.Fatal(err)
 	}
 }
-```
-
-### Using a Different Root Folder
-
-By default, `DriveFS` uses the user's root folder ("My Drive"). You can specify a different root folder by its ID:
-
-```go
-// Use a specific folder as the root
-driveFS := drivefs.New(service).WithRootID("your-folder-id")
 ```
 
 ## API Reference
 
 ### DriveFS
 
-The main filesystem type that implements `fs.FS` and `fs.ReadDirFS`.
+The main type for interacting with Google Drive.
 
-- `New(service *drive.Service) *DriveFS` - Creates a new DriveFS instance
-- `WithRootID(rootID string) *DriveFS` - Returns a copy with a different root folder ID (shares the same service)
-- `Open(name string) (fs.File, error)` - Opens a file or directory (uses background context)
-- `OpenContext(ctx context.Context, name string) (fs.File, error)` - Opens a file or directory with context
-- `ReadDir(name string) ([]fs.DirEntry, error)` - Reads directory contents (uses background context)
-- `ReadDirContext(ctx context.Context, name string) ([]fs.DirEntry, error)` - Reads directory contents with context
+#### Constructor
 
-### DriveFile
+- `New(service *drive.Service, rootID FileID) *DriveFS` - Creates a new DriveFS instance with the specified root folder ID. Use `"root"` for the user's root folder ("My Drive").
 
-Implements `fs.File` for regular files.
+#### Directory Operations
 
-- `Read(b []byte) (int, error)` - Reads file content
-- `Stat() (fs.FileInfo, error)` - Returns file information
-- `Close() error` - Closes the file
+- `MkdirAll(path Path) (FileInfo, error)` - Creates all directories along the given path if they do not already exist, and returns the FileInfo of the last created directory.
+- `Mkdir(parentID FileID, name string) (FileInfo, error)` - Creates a single directory with the given name under the specified parent directory.
 
-### DriveDir
+#### File Operations
 
-Implements `fs.File` and `fs.ReadDirFile` for directories.
+- `Create(parentID FileID, name string) (FileInfo, error)` - Creates a new file in the specified parent directory. If the file already exists, it will be truncated.
+- `ReadFile(fileID FileID) ([]byte, error)` - Reads and returns the entire contents of a file.
+- `WriteFile(fileID FileID, data []byte) error` - Writes data to an existing file, overwriting its contents.
 
-- `ReadDir(n int) ([]fs.DirEntry, error)` - Reads directory entries
-- `Stat() (fs.FileInfo, error)` - Returns directory information
-- `Close() error` - Closes the directory
+#### Metadata and Navigation
 
-### DriveDirEntry
+- `Stat(fileID FileID) (FileInfo, error)` - Returns the FileInfo for the file or directory with the given ID.
+- `ReadDir(fileID FileID) ([]FileInfo, error)` - Lists all files and directories within the specified directory.
+- `ResolveFileID(path Path) (FileInfo, error)` - Resolves an absolute path (relative to the root) and returns the corresponding FileInfo.
+- `ResolvePath(fileID FileID) (Path, error)` - Returns the absolute path from the root directory to the file or directory with the given ID.
 
-Implements `fs.DirEntry` for directory entries.
+#### File System Manipulation
 
-- `Name() string` - Returns the entry name
-- `IsDir() bool` - Returns true if the entry is a directory
-- `Type() fs.FileMode` - Returns the file mode bits
-- `Info() (fs.FileInfo, error)` - Returns the file info
+- `Move(fileID, newParentID FileID) error` - Moves a file or directory to a new parent directory.
+- `Remove(fileID FileID, trash bool) error` - Removes a file or empty directory. If `trash` is true, the item is moved to trash; otherwise, it is permanently deleted. Returns an error if trying to remove a non-empty directory.
+- `RemoveAll(fileID FileID, trash bool) error` - Removes a file or directory and all its contents. If `trash` is true, items are moved to trash; otherwise, they are permanently deleted.
 
-### DriveFileInfo
+#### Tree Walking
 
-Implements `fs.FileInfo` for file metadata.
+- `Walk(fileID FileID, f func(FileInfo) error) error` - Walks the file tree rooted at the specified file or directory, calling the provided function for each item (including the root).
 
-- `Name() string` - Returns the base name
-- `Size() int64` - Returns the file size in bytes
-- `Mode() fs.FileMode` - Returns the file mode
-- `ModTime() time.Time` - Returns the modification time
-- `IsDir() bool` - Returns true if it's a directory
-- `Sys() any` - Returns nil (no underlying data)
+### Types
+
+#### FileID
+
+`type FileID string`
+
+A unique identifier for a file or directory in Google Drive.
+
+#### Path
+
+`type Path string`
+
+An absolute path string that must start with `/`. Relative path components (`.` and `..`) are not allowed.
+
+#### FileInfo
+
+```go
+type FileInfo struct {
+    Name    string
+    ID      FileID
+    Size    int64
+    Mime    string
+    ModTime time.Time
+}
+```
+
+Contains metadata about a file or directory.
+
+**Methods:**
+
+- `IsFolder() bool` - Returns true if the item is a folder.
+- `IsAppFile() bool` - Returns true if the item is a Google Apps file (e.g., Google Docs, Sheets, etc.).
 
 ## Authentication
 
@@ -159,6 +198,8 @@ This package requires an authenticated `drive.Service`. You'll need to:
 4. Authenticate and create a `drive.Service`
 
 See the [Google Drive API Go Quickstart](https://developers.google.com/drive/api/v3/quickstart/go) for detailed instructions.
+
+**Note:** For full read-write access, use `drive.DriveScope`. For read-only access, use `drive.DriveReadonlyScope`.
 
 ## License
 
