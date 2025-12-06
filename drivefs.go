@@ -1,432 +1,455 @@
-// Package drivefs provides a read-only filesystem interface for Google Drive.
-// It implements standard Go filesystem interfaces (fs.FS, fs.File, fs.DirEntry, fs.FileInfo)
-// for accessing Google Drive contents using the google.golang.org/api/drive/v3 package.
-//
-// Note: The openFile method loads entire file content into memory. This can be problematic
-// for large files as it may consume excessive memory. This limitation should be considered
-// when working with large files.
 package drivefs
 
 import (
 	"bytes"
-	"context"
+	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"path"
+	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 )
 
-// DriveFS implements fs.FS for Google Drive.
-// It provides a read-only filesystem view of Google Drive contents.
-// Note: DriveFS instances created with WithRootID share the same service with the original.
 type DriveFS struct {
 	service *drive.Service
-	rootID  string // ID of the root folder (default: "root")
+	rootID  string
 }
-
-// Verify interface implementations at compile time.
-var (
-	_ fs.FS        = (*DriveFS)(nil)
-	_ fs.ReadDirFS = (*DriveFS)(nil)
-)
 
 // New creates a new DriveFS instance with the given drive.Service.
-// The service should be authenticated with appropriate scopes for reading files.
-func New(service *drive.Service) *DriveFS {
-	return &DriveFS{
-		service: service,
-		rootID:  "root",
-	}
+func New(service *drive.Service, rootID FileID) *DriveFS {
+	return &DriveFS{service: service, rootID: string(rootID)}
 }
 
-// WithRootID returns a copy of DriveFS with a different root folder ID.
-// Note: The returned DriveFS shares the same service with the original.
-func (dfs *DriveFS) WithRootID(rootID string) *DriveFS {
-	return &DriveFS{
-		service: dfs.service,
-		rootID:  rootID,
-	}
-}
-
-// Open opens the named file from Google Drive using a background context.
-// The name must be an absolute path (cannot be ".").
-// For context control, use OpenContext instead.
-func (dfs *DriveFS) Open(name string) (fs.File, error) {
-	return dfs.OpenContext(context.Background(), name)
-}
-
-// OpenContext opens the named file from Google Drive with the given context.
-// The name must be an absolute path (cannot be ".").
-func (dfs *DriveFS) OpenContext(ctx context.Context, name string) (fs.File, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
-	}
-
-	// Reject relative path "." - only absolute paths are allowed
-	if name == "." {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
-	}
-
-	// Resolve the path to a file ID
-	fileID, err := dfs.resolvePathContext(ctx, name)
+// MkdirAll creates all directories along the given path if they do not already exist and returns the ID of the last created directory.
+func (s *DriveFS) MkdirAll(path Path) (info FileInfo, err error) {
+	parts, err := validateAndSplitPath(string(path))
 	if err != nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
+		return FileInfo{}, fmt.Errorf("path validation failed: %w", err)
 	}
-
-	// Get file metadata
-	file, err := dfs.service.Files.Get(fileID).
-		Context(ctx).
-		Fields("id, name, mimeType, size, modifiedTime, createdTime").
-		Do()
+	currentID := s.rootID
+	file, found, err := findByID(s, currentID)
 	if err != nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
+		return FileInfo{}, err
 	}
-
-	// Check if it's a directory (folder)
-	if file.MimeType == "application/vnd.google-apps.folder" {
-		return dfs.openDirContext(ctx, fileID, name)
+	if !found {
+		return FileInfo{}, fmt.Errorf("root not found: %s: %w", currentID, ErrNotExist)
 	}
-
-	return dfs.openFileContext(ctx, file, name)
-}
-
-// ReadDir reads the named directory and returns a list of directory entries
-// using a background context.
-// The name must be an absolute path (cannot be ".").
-// For context control, use ReadDirContext instead.
-func (dfs *DriveFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	return dfs.ReadDirContext(context.Background(), name)
-}
-
-// ReadDirContext reads the named directory and returns a list of directory entries
-// with the given context.
-// The name must be an absolute path (cannot be ".").
-func (dfs *DriveFS) ReadDirContext(ctx context.Context, name string) ([]fs.DirEntry, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
-	}
-
-	// Reject relative path "." - only absolute paths are allowed
-	if name == "." {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
-	}
-
-	folderID, err := dfs.resolvePathContext(ctx, name)
-	if err != nil {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
-	}
-
-	entries, err := dfs.listDirContext(ctx, folderID)
-	if err != nil {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
-	}
-
-	return entries, nil
-}
-
-// resolvePathContext resolves a path to a Google Drive file ID.
-func (dfs *DriveFS) resolvePathContext(ctx context.Context, name string) (string, error) {
-	parts := strings.Split(name, "/")
-	currentID := dfs.rootID
-
-	for _, part := range parts {
-		if part == "" || part == "." {
+	for _, p := range parts {
+		file, found, err = findByNameIn(s, currentID, p)
+		if err != nil {
+			return FileInfo{}, fmt.Errorf("failed to find directory '%s' in '%s': %w", p, currentID, err)
+		}
+		if found {
+			currentID = file.Id
 			continue
 		}
+		file, err = createDirIn(s, currentID, p)
+		if err != nil {
+			return FileInfo{}, fmt.Errorf("failed to create directory '%s' in '%s': %w", p, currentID, err)
+		}
+		currentID = file.Id
+	}
+	return newFileInfo(file)
+}
 
-		// Search for the file in the current folder
-		query := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false",
-			escapeQuery(part), currentID)
+// Mkdir creates a directory with the given name and returns the ID of the created directory.
+func (s *DriveFS) Mkdir(parentID FileID, name string) (info FileInfo, err error) {
+	f, err := createDirIn(s, string(parentID), name)
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("failed to create directory: %w", err)
+	}
+	return newFileInfo(f)
+}
 
-		fileList, err := dfs.service.Files.List().
-			Context(ctx).
-			Q(query).
-			Fields("files(id, name, mimeType)").
-			PageSize(1).
+// ReadFile reads the file with the given fileID and returns its contents as a byte slice.
+func (s *DriveFS) ReadFile(fileID FileID) (data []byte, err error) {
+	return downloadFile(s, string(fileID))
+}
+
+// Remove moves the file or directory with the given fileID to the trash.
+func (s *DriveFS) Remove(fileID FileID, trash bool) (err error) {
+	file, found, err := findByID(s, string(fileID))
+	if err != nil {
+		return fmt.Errorf("failed to find file: %w", err)
+	}
+	if !found {
+		return nil
+	}
+	if file.MimeType == mimeTypeGoogleAppFolder {
+		exists, err := existsIn(s, string(fileID))
+		if err != nil {
+			return fmt.Errorf("failed to check if directory is empty: %w", err)
+		}
+		if exists {
+			return fmt.Errorf("directory '%s' is not empty: %w", fileID, ErrNotRemovable)
+		}
+	}
+
+	return s.RemoveAll(fileID, trash)
+}
+
+// RemoveAll moves the file or directory with the given fileID to the trash or deletes it permanently.
+func (s *DriveFS) RemoveAll(fileID FileID, trash bool) (err error) {
+	if trash {
+		_, err := s.service.Files.Update(string(fileID), &drive.File{Trashed: true}).
+			SupportsAllDrives(true).
 			Do()
 		if err != nil {
-			return "", err
+			return newDriveError("failed to trash file", err)
 		}
-
-		if len(fileList.Files) == 0 {
-			return "", fs.ErrNotExist
+		return nil
+	} else {
+		err := s.service.Files.Delete(string(fileID)).
+			SupportsAllDrives(true).
+			Do()
+		if err != nil {
+			return newDriveError("failed to delete file", err)
 		}
-
-		currentID = fileList.Files[0].Id
+		return nil
 	}
-
-	return currentID, nil
 }
 
-// listDirContext lists the contents of a directory.
-func (dfs *DriveFS) listDirContext(ctx context.Context, folderID string) ([]fs.DirEntry, error) {
-	var entries []fs.DirEntry
-	var pageToken string
+// Move moves the file or directory at fileID to the new parent directory specified by newParentID.
+func (s *DriveFS) Move(fileID, newParentID FileID) (err error) {
+	f, found, err := findByID(s, string(fileID))
+	if err != nil {
+		return fmt.Errorf("failed to find file: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("file '%s' not found: %w", fileID, ErrNotExist)
+	}
+	_, err = s.service.Files.Update(string(fileID), &drive.File{}).
+		SupportsAllDrives(true).
+		RemoveParents(strings.Join(f.Parents, ",")).
+		AddParents(string(newParentID)).
+		Do()
+	if err != nil {
+		return newDriveError("failed to move file", err)
+	}
+	return nil
+}
 
-	for {
-		query := fmt.Sprintf("'%s' in parents and trashed = false", folderID)
-		call := dfs.service.Files.List().
-			Context(ctx).
-			Q(query).
-			Fields("nextPageToken, files(id, name, mimeType, size, modifiedTime)").
-			OrderBy("name").
-			PageSize(100)
+// WriteFile writes the provided data to the file with the given fileID. If the file exists, it will be overwritten. Returns an error on failure.
+func (s *DriveFS) WriteFile(fileID FileID, data []byte) (err error) {
+	return uploadFile(s, string(fileID), data)
+}
 
-		if pageToken != "" {
-			call = call.PageToken(pageToken)
-		}
-
-		fileList, err := call.Do()
+// ReadDir lists the contents of the directory with the given fileID.
+func (s *DriveFS) ReadDir(fileID FileID) (children []FileInfo, err error) {
+	l, err := findAllIn(s, string(fileID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list directory contents: %w", err)
+	}
+	for _, f := range l {
+		child, err := newFileInfo(f)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create FileInfo: %w", err)
 		}
+		children = append(children, child)
+	}
+	return children, nil
+}
 
-		for _, f := range fileList.Files {
-			entries = append(entries, &DriveDirEntry{file: f})
+// Create creates a new file at the specified parent directory with the given name.
+func (s *DriveFS) Create(parentID FileID, name string) (info FileInfo, err error) {
+	f, found, err := findByNameIn(s, string(parentID), name)
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("failed to find parent directory '%s': %w", parentID, err)
+	}
+	if found {
+		if err := uploadFile(s, f.Id, []byte("")); err != nil {
+			return FileInfo{}, fmt.Errorf("failed to truncate file: %w", err)
 		}
+		return newFileInfo(f)
+	} else {
+		f, err := createFileIn(s, string(parentID), name)
+		if err != nil {
+			return FileInfo{}, fmt.Errorf("failed to create file: %w", err)
+		}
+		return newFileInfo(f)
+	}
+}
 
-		pageToken = fileList.NextPageToken
-		if pageToken == "" {
+// Stat returns the FileInfo for the file with the given fileID.
+func (s *DriveFS) Stat(fileID FileID) (info FileInfo, err error) {
+	f, found, err := findByID(s, string(fileID))
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("failed to get file info '%s': %w", fileID, err)
+	}
+	if !found {
+		return FileInfo{}, fmt.Errorf("file not found: %s: %w", fileID, ErrNotExist)
+	}
+	return newFileInfo(f)
+}
+
+// ResolveFileID resolves the given path relative to the root directory and returns the corresponding FileInfo.
+func (s *DriveFS) ResolveFileID(path Path) (info FileInfo, err error) {
+	parts, err := validateAndSplitPath(string(path))
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("path validation failed: %w", err)
+	}
+	currentID := s.rootID
+	file, found, err := findByID(s, currentID)
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("failed to find root directory: %w", err)
+	}
+	if !found {
+		return FileInfo{}, fmt.Errorf("root directory not found: %s: %w", currentID, ErrNotExist)
+	}
+	for _, p := range parts {
+		file, found, err = findByNameIn(s, currentID, p)
+		if err != nil {
+			return FileInfo{}, err
+		}
+		if !found {
+			return FileInfo{}, fmt.Errorf("path does not exist: %s: %w", path, ErrNotExist)
+		}
+		currentID = file.Id
+	}
+	return newFileInfo(file)
+}
+
+// ResolvePath returns the absolute path from the root directory to the file with the given fileID.
+// The returned path is a slash-separated string (e.g., "/folder/subfolder/file").
+func (s *DriveFS) ResolvePath(fileID FileID) (path Path, err error) {
+	currentID := string(fileID)
+	var parts []string
+	for {
+		if currentID == s.rootID {
 			break
 		}
+		f, found, err := findByID(s, currentID)
+		if err != nil {
+			return "", fmt.Errorf("failed to get file info: %w", err)
+		}
+		if !found {
+			return "", fmt.Errorf("file not found: %s: %w", currentID, ErrNotExist)
+		}
+		parts = append(parts, f.Name)
+		if len(f.Parents) == 0 {
+			break
+		}
+		currentID = f.Parents[0]
 	}
-
-	return entries, nil
+	slices.Reverse(parts)
+	return Path("/" + strings.Join(parts, "/")), nil
 }
 
-// openDirContext opens a directory for reading.
-func (dfs *DriveFS) openDirContext(ctx context.Context, folderID, name string) (*DriveDir, error) {
-	entries, err := dfs.listDirContext(ctx, folderID)
+// Walk walks the file tree rooted at fileID, calling f for each file or directory in the tree, including fileID itself.
+func (s *DriveFS) Walk(fileID FileID, f func(FileInfo) error) (err error) {
+	file, found, err := findByID(s, string(fileID))
 	if err != nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
+		return fmt.Errorf("failed to get file info: %w", err)
 	}
-
-	return &DriveDir{
-		name:    path.Base(name),
-		entries: entries,
-	}, nil
+	if !found {
+		return fmt.Errorf("file not found: %s: %w", fileID, ErrNotExist)
+	}
+	return walk(s, file, f)
 }
 
-// openFileContext opens a file for reading.
-// Note: This method loads the entire file content into memory.
-func (dfs *DriveFS) openFileContext(ctx context.Context, file *drive.File, name string) (*DriveFile, error) {
-	// Download file content
-	resp, err := dfs.service.Files.Get(file.Id).
-		Context(ctx).
-		Download()
+func walk(s *DriveFS, file *drive.File, f func(FileInfo) error) (err error) {
+	info, err := newFileInfo(file)
 	if err != nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
+		return fmt.Errorf("failed to create FileInfo: %w", err)
 	}
-	defer resp.Body.Close()
-
-	content, err := io.ReadAll(resp.Body)
+	if err := f(info); err != nil {
+		return err
+	}
+	if file.MimeType != mimeTypeGoogleAppFolder {
+		return nil
+	}
+	files, err := findAllIn(s, file.Id)
 	if err != nil {
-		return nil, &fs.PathError{Op: "read", Path: name, Err: err}
+		return fmt.Errorf("failed to list files: %w", err)
 	}
-
-	modTime, err := parseModTime(file.ModifiedTime)
-	if err != nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fmt.Errorf("invalid modification time: %w", err)}
+	for _, file := range files {
+		if err := walk(s, file, f); err != nil {
+			return err
+		}
 	}
-
-	return &DriveFile{
-		name:    path.Base(name),
-		content: bytes.NewReader(content),
-		size:    file.Size,
-		modTime: modTime,
-	}, nil
+	return nil
 }
 
-// escapeQuery escapes special characters in a query string.
+func validateAndSplitPath(path string) (parts []string, err error) {
+	if path == "" {
+		return nil, fmt.Errorf("empty path: %w", ErrInvalidPath)
+	}
+	if !strings.HasPrefix(path, "/") {
+		return nil, fmt.Errorf("path must be absolute and start with '/': %w", ErrInvalidPath)
+	}
+
+	for _, p := range strings.Split(path, "/") {
+		if p == "." || p == ".." {
+			return nil, fmt.Errorf("relative path components are not allowed: %w", ErrInvalidPath)
+		}
+		if p == "" {
+			continue
+		}
+		parts = append(parts, p)
+	}
+
+	return parts, nil
+}
+
 func escapeQuery(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, "'", `\'`)
+	s = strings.ReplaceAll(s, `\`, `\\`)
 	return s
 }
 
-// parseModTime parses a modification time string in RFC3339 format.
-func parseModTime(modifiedTime string) (time.Time, error) {
-	return time.Parse(time.RFC3339, modifiedTime)
-}
-
-// DriveFile implements fs.File for a Google Drive file.
-type DriveFile struct {
-	name    string
-	content *bytes.Reader
-	size    int64
-	modTime time.Time
-}
-
-// Verify interface implementation at compile time.
-var _ fs.File = (*DriveFile)(nil)
-
-// Stat returns the file info.
-func (f *DriveFile) Stat() (fs.FileInfo, error) {
-	return &DriveFileInfo{
-		name:    f.name,
-		size:    f.size,
-		modTime: f.modTime,
-		isDir:   false,
-	}, nil
-}
-
-// Read reads from the file.
-func (f *DriveFile) Read(b []byte) (int, error) {
-	return f.content.Read(b)
-}
-
-// Close closes the file.
-func (f *DriveFile) Close() error {
-	return nil
-}
-
-// DriveDir implements fs.File and fs.ReadDirFile for a Google Drive directory.
-// DriveDir's ReadDir method is protected by a mutex for concurrent use.
-type DriveDir struct {
-	name    string
-	entries []fs.DirEntry
-	offset  int
-	mu      sync.Mutex
-}
-
-// Verify interface implementations at compile time.
-var (
-	_ fs.File        = (*DriveDir)(nil)
-	_ fs.ReadDirFile = (*DriveDir)(nil)
+const (
+	driveFileFields  = "parents,id,name,mimeType,size,modifiedTime"
+	driveFilesFields = "nextPageToken,files(parents,id,name,mimeType,size,modifiedTime)"
 )
 
-// Stat returns the directory info.
-func (d *DriveDir) Stat() (fs.FileInfo, error) {
-	return &DriveFileInfo{
-		name:  d.name,
-		isDir: true,
+func newFileInfo(f *drive.File) (FileInfo, error) {
+	modTime, _ := time.Parse(time.RFC3339, f.ModifiedTime)
+	return FileInfo{
+		Name:    f.Name,
+		ID:      FileID(f.Id),
+		Size:    f.Size,
+		Mime:    f.MimeType,
+		ModTime: modTime,
 	}, nil
 }
 
-// Read returns an error because directories cannot be read.
-func (d *DriveDir) Read(b []byte) (int, error) {
-	return 0, &fs.PathError{Op: "read", Path: d.name, Err: fs.ErrInvalid}
-}
-
-// Close closes the directory.
-func (d *DriveDir) Close() error {
-	return nil
-}
-
-// ReadDir reads the directory entries.
-func (d *DriveDir) ReadDir(n int) ([]fs.DirEntry, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if n <= 0 {
-		entries := d.entries[d.offset:]
-		d.offset = len(d.entries)
-		return entries, nil
-	}
-
-	if d.offset >= len(d.entries) {
-		return nil, io.EOF
-	}
-
-	end := d.offset + n
-	if end > len(d.entries) {
-		end = len(d.entries)
-	}
-
-	entries := d.entries[d.offset:end]
-	d.offset = end
-
-	if d.offset >= len(d.entries) {
-		return entries, io.EOF
-	}
-	return entries, nil
-}
-
-// DriveDirEntry implements fs.DirEntry for a Google Drive file or folder.
-type DriveDirEntry struct {
-	file *drive.File
-}
-
-// Verify interface implementation at compile time.
-var _ fs.DirEntry = (*DriveDirEntry)(nil)
-
-// Name returns the name of the entry.
-func (e *DriveDirEntry) Name() string {
-	return e.file.Name
-}
-
-// IsDir reports whether the entry is a directory.
-func (e *DriveDirEntry) IsDir() bool {
-	return e.file.MimeType == "application/vnd.google-apps.folder"
-}
-
-// Type returns the file mode bits.
-func (e *DriveDirEntry) Type() fs.FileMode {
-	if e.IsDir() {
-		return fs.ModeDir
-	}
-	return 0
-}
-
-// Info returns the file info.
-func (e *DriveDirEntry) Info() (fs.FileInfo, error) {
-	modTime, err := parseModTime(e.file.ModifiedTime)
+func findByNameIn(s *DriveFS, parentID string, name string) (file *drive.File, found bool, err error) {
+	q := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false", escapeQuery(name), parentID)
+	res, err := s.service.Files.List().
+		SupportsAllDrives(true).
+		IncludeItemsFromAllDrives(true).
+		Q(q).
+		Fields(driveFileFields).
+		PageSize(1).
+		Do()
 	if err != nil {
-		return nil, fmt.Errorf("invalid modification time for file %q: %w", e.file.Name, err)
+		return nil, false, newDriveError("failed to list files", err)
 	}
-	return &DriveFileInfo{
-		name:    e.file.Name,
-		size:    e.file.Size,
-		modTime: modTime,
-		isDir:   e.IsDir(),
-	}, nil
-}
-
-// DriveFileInfo implements fs.FileInfo for a Google Drive file or folder.
-type DriveFileInfo struct {
-	name    string
-	size    int64
-	modTime time.Time
-	isDir   bool
-}
-
-// Verify interface implementation at compile time.
-var _ fs.FileInfo = (*DriveFileInfo)(nil)
-
-// Name returns the base name of the file.
-func (fi *DriveFileInfo) Name() string {
-	return fi.name
-}
-
-// Size returns the size of the file in bytes.
-func (fi *DriveFileInfo) Size() int64 {
-	return fi.size
-}
-
-// Mode returns the file mode bits.
-func (fi *DriveFileInfo) Mode() fs.FileMode {
-	if fi.isDir {
-		return fs.ModeDir | 0555
+	if len(res.Files) == 0 {
+		return nil, false, nil
 	}
-	return 0444
+	return res.Files[0], true, nil
 }
 
-// ModTime returns the modification time.
-func (fi *DriveFileInfo) ModTime() time.Time {
-	return fi.modTime
+func existsIn(s *DriveFS, parentID string) (found bool, err error) {
+	q := fmt.Sprintf("'%s' in parents and trashed = false", parentID)
+	res, err := s.service.Files.List().
+		SupportsAllDrives(true).
+		IncludeItemsFromAllDrives(true).
+		Q(q).
+		Fields(driveFileFields).
+		PageSize(1).
+		Do()
+	if err != nil {
+		return false, newDriveError("failed to list files", err)
+	}
+	return len(res.Files) != 0, nil
 }
 
-// IsDir reports whether the file is a directory.
-func (fi *DriveFileInfo) IsDir() bool {
-	return fi.isDir
+func findByID(s *DriveFS, fileID string) (file *drive.File, found bool, err error) {
+	file, err = s.service.Files.Get(fileID).
+		SupportsAllDrives(true).
+		Fields(driveFileFields).
+		Do()
+	if err != nil {
+		var gErr *googleapi.Error
+		if errors.As(err, &gErr) {
+			if gErr.Code == 404 {
+				return nil, false, nil
+			}
+		}
+		return nil, false, newDriveError("failed to get files", err)
+	}
+	return file, true, nil
 }
 
-// Sys returns the underlying data source (always nil for DriveFileInfo).
-func (fi *DriveFileInfo) Sys() any {
+func findAllIn(s *DriveFS, parentID string) (files []*drive.File, err error) {
+	q := fmt.Sprintf("'%s' in parents and trashed = false", parentID)
+	err = s.service.Files.List().
+		SupportsAllDrives(true).
+		IncludeItemsFromAllDrives(true).
+		Q(q).
+		Fields(driveFilesFields).
+		Pages(nil, func(page *drive.FileList) error {
+			files = append(files, page.Files...)
+			return nil
+		})
+	if err != nil {
+		return nil, newDriveError("failed to list files", err)
+	}
+	return files, nil
+}
+
+func createDirIn(s *DriveFS, parentID, name string) (file *drive.File, err error) {
+	file, err = s.service.Files.Create(&drive.File{
+		Name:     name,
+		MimeType: mimeTypeGoogleAppFolder,
+		Parents:  []string{parentID},
+	}).
+		Fields(driveFileFields).
+		Do()
+	if err != nil {
+		return nil, newDriveError("failed to create directory", err)
+	}
+	return file, nil
+}
+
+func createFileIn(s *DriveFS, parentID, name string) (file *drive.File, err error) {
+	file, err = s.service.Files.Create(&drive.File{
+		Name:    name,
+		Parents: []string{parentID},
+	}).
+		Fields(driveFileFields).
+		Do()
+	if err != nil {
+		return nil, newDriveError("failed to create file", err)
+	}
+	return file, nil
+}
+
+func downloadFile(s *DriveFS, fileID string) (data []byte, err error) {
+	file, err := s.service.Files.Get(fileID).
+		SupportsAllDrives(true).
+		Do()
+	if err != nil {
+		return nil, newDriveError("failed to get file", err)
+	}
+
+	if strings.HasPrefix(file.MimeType, mimeTypePrefixGoogleApp) {
+		return nil, fmt.Errorf("cannot download google-apps file: %w", ErrNotReadable)
+	}
+
+	resp, err := s.service.Files.Get(fileID).
+		SupportsAllDrives(true).
+		Download()
+	if err != nil {
+		return nil, newDriveError("failed to download file", err)
+	}
+	defer func() {
+		closeErr := resp.Body.Close()
+		if closeErr != nil {
+			closeErr = newIOError("failed to close file body", closeErr)
+		}
+		err = errors.Join(err, closeErr)
+	}()
+
+	data, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, newIOError("failed to read file body", err)
+	}
+	return data, nil
+}
+
+func uploadFile(s *DriveFS, fileID string, data []byte) (err error) {
+	_, err = s.service.Files.Update(fileID, &drive.File{}).
+		SupportsAllDrives(true).
+		Media(bytes.NewBuffer(data)).
+		Do()
+	if err != nil {
+		return newDriveError("failed to upload file", err)
+	}
 	return nil
 }
