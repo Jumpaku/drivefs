@@ -49,5 +49,8 @@ func (err *wrapError) Error() string {
 }
 
 func (err *wrapError) Unwrap() []error {
+	if err.cause == nil {
+		return []error{err.underlying}
+	}
 	return []error{err.underlying, err.cause}
 }
