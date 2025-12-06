@@ -444,7 +444,10 @@ func downloadFile(s *DriveFS, fileID string) (data []byte, err error) {
 }
 
 func uploadFile(s *DriveFS, fileID string, data []byte) (err error) {
-	_, err = s.service.Files.Update(fileID, &drive.File{}).Media(bytes.NewBuffer(data)).Do()
+	_, err = s.service.Files.Update(fileID, &drive.File{}).
+		SupportsAllDrives(true).
+		Media(bytes.NewBuffer(data)).
+		Do()
 	if err != nil {
 		return newDriveError("failed to upload file", err)
 	}
