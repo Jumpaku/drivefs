@@ -137,7 +137,7 @@ func (s *DriveFS) WriteFile(fileID FileID, data []byte) (err error) {
 	return uploadFile(s, string(fileID), data)
 }
 
-// ReadDir lists the contents of the directory at the specified path.
+// ReadDir lists the contents of the directory with the given fileID.
 func (s *DriveFS) ReadDir(fileID FileID) (children []FileInfo, err error) {
 	l, err := findAllIn(s, string(fileID))
 	if err != nil {
