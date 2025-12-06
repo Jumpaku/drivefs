@@ -84,7 +84,7 @@ func (s *DriveFS) Remove(fileID FileID, trash bool) (err error) {
 			return fmt.Errorf("failed to check if directory is empty: %w", err)
 		}
 		if exists {
-			return fmt.Errorf("directory '%s' is not empty: %w", fileID, ErrAlreadyExists)
+			return fmt.Errorf("directory '%s' is not empty: %w", fileID, ErrNotRemovable)
 		}
 	}
 

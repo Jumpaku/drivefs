@@ -5,12 +5,12 @@ import (
 )
 
 var (
-	ErrInvalidPath   = errors.New("invalid path")
-	ErrDriveError    = errors.New("drive error")
-	ErrIOError       = errors.New("io error")
-	ErrNotExist      = errors.New("not exist")
-	ErrNotReadable   = errors.New("not readable")
-	ErrAlreadyExists = errors.New("already exists")
+	ErrInvalidPath  = errors.New("invalid path")
+	ErrDriveError   = errors.New("drive error")
+	ErrIOError      = errors.New("io error")
+	ErrNotExist     = errors.New("not exist")
+	ErrNotReadable  = errors.New("not readable")
+	ErrNotRemovable = errors.New("not removable")
 )
 
 type wrapError struct {
