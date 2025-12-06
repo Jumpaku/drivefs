@@ -13,9 +13,6 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
-type FileID string
-type Path string
-
 type DriveFS struct {
 	service *drive.Service
 	rootID  string
@@ -24,17 +21,6 @@ type DriveFS struct {
 // New creates a new DriveFS instance with the given drive.Service.
 func New(service *drive.Service, rootID FileID) *DriveFS {
 	return &DriveFS{service: service, rootID: string(rootID)}
-}
-
-func newFileInfo(f *drive.File) (FileInfo, error) {
-	modTime, _ := time.Parse(time.RFC3339, f.ModifiedTime)
-	return FileInfo{
-		Name:    f.Name,
-		ID:      f.Id,
-		Size:    f.Size,
-		Mime:    f.MimeType,
-		ModTime: modTime,
-	}, nil
 }
 
 // MkdirAll creates all directories along the given path if they do not already exist and returns the ID of the last created directory.
@@ -126,19 +112,18 @@ func (s *DriveFS) RemoveAll(fileID FileID, trash bool) (err error) {
 	}
 }
 
-// Move moves the file or directory at oldpath to newpath.
+// Move moves the file or directory at fileID to the new parent directory specified by newParentID.
 func (s *DriveFS) Move(fileID, newParentID FileID) (err error) {
 	f, found, err := findByID(s, string(fileID))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to find file: %w", err)
 	}
 	if !found {
 		return fmt.Errorf("file '%s' not found: %w", fileID, ErrNotExist)
 	}
-	oldParents := strings.Join(f.Parents, ",")
 	_, err = s.service.Files.Update(string(fileID), &drive.File{}).
 		SupportsAllDrives(true).
-		RemoveParents(oldParents).
+		RemoveParents(strings.Join(f.Parents, ",")).
 		AddParents(string(newParentID)).
 		Do()
 	if err != nil {
@@ -318,6 +303,17 @@ const (
 	driveFileFields  = "parents,id,name,mimeType,size,modifiedTime"
 	driveFilesFields = "nextPageToken,files(parents,id,name,mimeType,size,modifiedTime)"
 )
+
+func newFileInfo(f *drive.File) (FileInfo, error) {
+	modTime, _ := time.Parse(time.RFC3339, f.ModifiedTime)
+	return FileInfo{
+		Name:    f.Name,
+		ID:      FileID(f.Id),
+		Size:    f.Size,
+		Mime:    f.MimeType,
+		ModTime: modTime,
+	}, nil
+}
 
 func findByNameIn(s *DriveFS, parentID string, name string) (file *drive.File, found bool, err error) {
 	q := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false", escapeQuery(name), parentID)

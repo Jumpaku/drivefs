@@ -10,9 +10,11 @@ const (
 	mimeTypePrefixGoogleApp = "application/vnd.google-apps."
 )
 
+type FileID string
+
 type FileInfo struct {
 	Name    string
-	ID      string
+	ID      FileID
 	Size    int64
 	Mime    string
 	ModTime time.Time
