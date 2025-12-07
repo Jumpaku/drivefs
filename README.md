@@ -47,8 +47,11 @@ func main() {
 	}
 
 	// Create a new DriveFS instance with a root folder ID
-	// Use "root" for the user's My Drive, or a specific folder ID
-	driveFS := drivefs.New(service, "root")
+	// Use "root" or "" for the user's My Drive, or a specific folder ID
+	driveFS, err := drivefs.New(service, "root")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Create a directory structure
 	dirInfo, err := driveFS.MkdirAll("/path/to/directory")
@@ -165,7 +168,7 @@ The main type for interacting with Google Drive.
 
 #### Constructor
 
-- `New(service *drive.Service, rootID FileID) *DriveFS` - Creates a new DriveFS instance with the specified root folder ID. Use `"root"` for the user's My Drive, or a specific folder ID for a Shared Drive or subdirectory.
+- `New(service *drive.Service, rootID FileID) (*DriveFS, error)` - Creates a new DriveFS instance with the specified root folder ID. Use `"root"` or `""` (empty string) for the user's My Drive, or a specific folder ID for a Shared Drive or subdirectory. Returns an error if the root directory cannot be accessed.
 
 #### Directory Operations
 
