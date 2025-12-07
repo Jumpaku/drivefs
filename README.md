@@ -147,9 +147,9 @@ func main() {
 		fmt.Printf("- %s (folder: %v, ID: %s)\n", entry.Name, entry.IsFolder(), entry.ID)
 	}
 
-	// Resolve paths to get FileInfo
+	// Find files by path
 	// Returns all matching files (multiple if duplicates exist at any level)
-	resolvedInfos, err := driveFS.ResolveByPath("/path/to/directory/example.txt")
+	resolvedInfos, err := driveFS.FindByPath("/path/to/directory/example.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -195,6 +195,40 @@ func main() {
 		fmt.Printf("%s: %s (ID: %s)\n", path, info.Name, info.ID)
 		return nil
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Manage permissions
+	// List current permissions
+	permissions, err := driveFS.PermList(fileInfo.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, perm := range permissions {
+		fmt.Printf("Permission ID: %s, Role: %s\n", perm.ID(), perm.Role())
+	}
+
+	// Grant read access to a user
+	_, err = driveFS.PermSet(fileInfo.ID, drivefs.UserPermission("user@example.com", drivefs.RoleReader, false))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Grant write access to a group
+	_, err = driveFS.PermSet(fileInfo.ID, drivefs.GroupPermission("group@example.com", drivefs.RoleWriter, true))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Grant read access to anyone with the link
+	_, err = driveFS.PermSet(fileInfo.ID, drivefs.AnyonePermission(drivefs.RoleReader, false))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Remove a user's permission
+	_, err = driveFS.PermDel(fileInfo.ID, drivefs.User("user@example.com"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -305,7 +339,7 @@ Lists all files and directories directly within the specified directory.
 - Returns only immediate children (not recursive)
 
 ```go
-func (s *DriveFS) ResolveByPath(path Path) ([]FileInfo, error)
+func (s *DriveFS) FindByPath(path Path) ([]FileInfo, error)
 ```
 
 Resolves an absolute path (relative to the root) and returns all matching FileInfo objects.
@@ -376,6 +410,35 @@ Walks the file tree rooted at the specified file or directory, calling the provi
 - The function receives both the path and FileInfo for each item
 - If the callback function returns an error, walking stops and that error is returned
 
+#### Permission Management
+
+```go
+func (s *DriveFS) PermList(fileID FileID) ([]Permission, error)
+```
+
+Lists all permissions for the file or directory with the given ID.
+- Returns a slice of Permission objects representing all users, groups, domains, or anyone who has access
+- Each Permission contains information about the grantee, role, and whether file discovery is allowed
+
+```go
+func (s *DriveFS) PermSet(fileID FileID, permission Permission) ([]Permission, error)
+```
+
+Sets or updates a permission for the file or directory with the given ID.
+- If a permission for the specified grantee already exists, it will be updated
+- If no permission exists for the grantee, a new one will be created
+- Returns the updated list of all permissions for the file
+- Use helper functions like `UserPermission()`, `GroupPermission()`, `DomainPermission()`, or `AnyonePermission()` to create Permission objects
+
+```go
+func (s *DriveFS) PermDel(fileID FileID, grantee Grantee) ([]Permission, error)
+```
+
+Deletes all permissions matching the specified grantee for the file or directory.
+- Removes permissions for the specified user, group, domain, or anyone access
+- Returns the updated list of remaining permissions for the file
+- Use helper functions like `User()`, `Group()`, `Domain()`, or `Anyone()` to create Grantee objects
+
 ### Types
 
 #### FileID
@@ -408,6 +471,7 @@ type FileInfo struct {
     Mime           string    // MIME type (e.g., "text/plain", "application/vnd.google-apps.folder")
     ModTime        time.Time // Last modification time
     ShortcutTarget FileID    // Target file ID (for shortcuts only, empty otherwise)
+    WebViewLink    string    // URL to view the file in the Google Drive web interface
 }
 ```
 
@@ -431,6 +495,109 @@ func (i FileInfo) IsAppFile() bool
 ```
 Returns `true` if the item is a Google Apps file (e.g., Google Docs, Sheets, Slides).
 Google Apps files cannot be read with `ReadFile()` and must be exported using the Drive API's export functionality.
+
+#### Permission
+
+```go
+type Permission interface {
+    ID() PermissionID
+    Grantee() Grantee
+    Role() Role
+    AllowFileDiscovery() bool
+}
+```
+
+Represents a permission granted to a user, group, domain, or anyone for a file or directory.
+
+**Helper Functions to Create Permissions:**
+
+```go
+func UserPermission(email string, role Role, allowFileDiscovery bool) Permission
+```
+Creates a permission for a specific user identified by email address.
+
+```go
+func GroupPermission(email string, role Role, allowFileDiscovery bool) Permission
+```
+Creates a permission for a Google Group identified by email address.
+
+```go
+func DomainPermission(domain string, role Role, allowFileDiscovery bool) Permission
+```
+Creates a permission for an entire domain (e.g., "example.com").
+
+```go
+func AnyonePermission(role Role, allowFileDiscovery bool) Permission
+```
+Creates a permission that grants access to anyone with the link.
+
+#### Grantee
+
+```go
+type Grantee interface {
+    // Sealed interface - cannot be implemented outside the package
+}
+```
+
+Represents the recipient of a permission (user, group, domain, or anyone).
+
+**Helper Functions to Create Grantees:**
+
+```go
+func User(email string) Grantee
+```
+Creates a grantee representing a specific user.
+
+```go
+func Group(email string) Grantee
+```
+Creates a grantee representing a Google Group.
+
+```go
+func Domain(domain string) Grantee
+```
+Creates a grantee representing an entire domain.
+
+```go
+func Anyone() Grantee
+```
+Creates a grantee representing anyone with the link.
+
+**Concrete Grantee Types:**
+
+- `GranteeUser` - Represents a user with an `Email` field
+- `GranteeGroup` - Represents a group with an `Email` field
+- `GranteeDomain` - Represents a domain with a `Domain` field
+- `GranteeAnyone` - Represents public access (anyone with the link)
+
+#### Role
+
+```go
+type Role string
+```
+
+Represents the level of access granted by a permission.
+
+**Available Roles:**
+
+```go
+const (
+    RoleOwner         Role = "owner"         // Full ownership with ability to delete
+    RoleOrganizer     Role = "organizer"     // Can organize files in Shared Drives
+    RoleFileOrganizer Role = "fileOrganizer" // Can organize files
+    RoleWriter        Role = "writer"        // Can edit files and add comments
+    RoleCommenter     Role = "commenter"     // Can view and add comments
+    RoleReader        Role = "reader"        // Can only view files
+)
+```
+
+#### PermissionID
+
+```go
+type PermissionID string
+```
+
+A unique identifier for a permission. These IDs are assigned by Google Drive and are used to update or delete specific permissions.
 
 ### Errors
 
@@ -484,6 +651,7 @@ if err != nil {
 ## Features
 
 - ✅ **File and Directory Operations**: Create, read, write, copy, rename, move, and delete files and directories
+- ✅ **Permission Management**: List, set, and delete permissions for users, groups, domains, and public access
 - ✅ **Shortcut Support**: Create shortcuts (links) to files and directories
 - ✅ **Path-Based Operations**: Use familiar path strings like `/folder/subfolder/file.txt`
 - ✅ **Path Resolution**: Convert between file IDs and absolute paths
@@ -575,7 +743,7 @@ Google Drive's file system differs from traditional filesystems in that it allow
 
 - `Create()` and `Mkdir()` will create new items even if items with the same name already exist
 - To avoid duplicates, check existing items with `ReadDir()` before creating
-- `ResolveByPath()` returns **all** matching items when duplicates exist
+- `FindByPath()` returns **all** matching items when duplicates exist
 - `MkdirAll()` returns an error if it encounters multiple directories with the same name at any level
 
 ### Google Apps Files
