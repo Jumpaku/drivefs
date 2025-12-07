@@ -67,7 +67,7 @@ func (s *DriveFS) PermSet(fileID FileID, permission Permission) (permissions []P
 		case GranteeUser:
 			email, granteeType = grantee.Email, granteeTypeUser
 		case GranteeGroup:
-			email, granteeType = grantee.Email, granteeTypeUser
+			email, granteeType = grantee.Email, granteeTypeGroup
 		case GranteeDomain:
 			domain, granteeType = grantee.Domain, granteeTypeDomain
 		case GranteeAnyone:

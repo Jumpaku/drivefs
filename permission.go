@@ -17,12 +17,12 @@ type permission struct {
 	allowFileDiscovery bool
 }
 
-func UserPermission(email string, role Role, allowFileDiscovery bool) Permission {
-	return permission{grantee: User(email), role: role, allowFileDiscovery: allowFileDiscovery}
+func UserPermission(email string, role Role) Permission {
+	return permission{grantee: User(email), role: role}
 }
 
-func GroupPermission(email string, role Role, allowFileDiscovery bool) Permission {
-	return permission{grantee: Group(email), role: role, allowFileDiscovery: allowFileDiscovery}
+func GroupPermission(email string, role Role) Permission {
+	return permission{grantee: Group(email), role: role}
 }
 
 func DomainPermission(domain string, role Role, allowFileDiscovery bool) Permission {
