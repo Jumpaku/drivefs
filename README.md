@@ -210,13 +210,13 @@ func main() {
 	}
 
 	// Grant read access to a user
-	_, err = driveFS.PermSet(fileInfo.ID, drivefs.UserPermission("user@example.com", drivefs.RoleReader, false))
+	_, err = driveFS.PermSet(fileInfo.ID, drivefs.UserPermission("user@example.com", drivefs.RoleReader))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Grant write access to a group
-	_, err = driveFS.PermSet(fileInfo.ID, drivefs.GroupPermission("group@example.com", drivefs.RoleWriter, true))
+	_, err = driveFS.PermSet(fileInfo.ID, drivefs.GroupPermission("group@example.com", drivefs.RoleWriter))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -512,12 +512,12 @@ Represents a permission granted to a user, group, domain, or anyone for a file o
 **Helper Functions to Create Permissions:**
 
 ```go
-func UserPermission(email string, role Role, allowFileDiscovery bool) Permission
+func UserPermission(email string, role Role) Permission
 ```
 Creates a permission for a specific user identified by email address.
 
 ```go
-func GroupPermission(email string, role Role, allowFileDiscovery bool) Permission
+func GroupPermission(email string, role Role) Permission
 ```
 Creates a permission for a Google Group identified by email address.
 
