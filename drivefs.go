@@ -113,7 +113,7 @@ func (s *DriveFS) RemoveAll(fileID FileID, moveToTrash bool) (err error) {
 			SupportsAllDrives(true).
 			Do()
 		if err != nil {
-			return newDriveError("failed to move to trash file", err)
+			return newDriveError("failed to move file to trash", err)
 		}
 		return nil
 	} else {
