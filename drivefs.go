@@ -181,7 +181,7 @@ func (s *DriveFS) Create(parentID FileID, name string) (info FileInfo, err error
 func (s *DriveFS) Shortcut(parentID FileID, name string, targetID FileID) (info FileInfo, err error) {
 	f, err := createShortcutIn(s.service, string(parentID), name, string(targetID))
 	if err != nil {
-		return FileInfo{}, fmt.Errorf("failed to create file: %w", err)
+		return FileInfo{}, fmt.Errorf("failed to create shortcut: %w", err)
 	}
 	return newFileInfo(f)
 }
