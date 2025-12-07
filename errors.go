@@ -5,12 +5,14 @@ import (
 )
 
 var (
-	ErrInvalidPath  = errors.New("invalid path")
-	ErrDriveError   = errors.New("drive error")
-	ErrIOError      = errors.New("io error")
-	ErrNotExist     = errors.New("not exist")
-	ErrNotReadable  = errors.New("not readable")
-	ErrNotRemovable = errors.New("not removable")
+	ErrInvalidPath              = errors.New("invalid path")
+	ErrDriveError               = errors.New("drive error")
+	ErrIOError                  = errors.New("io error")
+	ErrNotFound                 = errors.New("not found")
+	ErrAlreadyExists            = errors.New("already exists")
+	ErrMultiParentsNotSupported = errors.New("multi parents not supported")
+	ErrNotReadable              = errors.New("not readable")
+	ErrNotRemovable             = errors.New("not removable")
 )
 
 type wrapError struct {
