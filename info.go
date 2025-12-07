@@ -20,6 +20,7 @@ type FileInfo struct {
 	Mime           string
 	ModTime        time.Time
 	ShortcutTarget FileID
+	WebViewLink    string
 }
 
 func (i FileInfo) IsFolder() bool {

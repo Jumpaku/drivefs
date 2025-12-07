@@ -34,6 +34,83 @@ func New(service *drive.Service, rootID FileID) (*DriveFS, error) {
 	return &DriveFS{service: service, rootID: string(rootID)}, nil
 }
 
+func (s *DriveFS) PermList(fileID FileID) (permissions []Permission, err error) {
+	perms, err := listPermissions(s.service, string(fileID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to set permissions: %w", err)
+	}
+	return newPermissions(perms), nil
+}
+
+func (s *DriveFS) PermSet(fileID FileID, permission Permission) (permissions []Permission, err error) {
+	perms, err := listPermissions(s.service, string(fileID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to set permissions: %w", err)
+	}
+
+	var updated bool
+	for _, perm := range perms {
+		if granteeMatch(perm, permission.Grantee()) {
+			updated = true
+			perm.AllowFileDiscovery = permission.AllowFileDiscovery()
+			perm.Role = string(permission.Role())
+			err := updatePermissions(s.service, string(fileID), perm)
+			if err != nil {
+				return nil, newDriveError("failed to set permission", err)
+			}
+		}
+	}
+
+	if !updated {
+		var email, domain, granteeType string
+		switch grantee := permission.Grantee().(type) {
+		case GranteeUser:
+			email, granteeType = grantee.Email, granteeTypeUser
+		case GranteeGroup:
+			email, granteeType = grantee.Email, granteeTypeUser
+		case GranteeDomain:
+			domain, granteeType = grantee.Domain, granteeTypeDomain
+		case GranteeAnyone:
+			granteeType = granteeTypeAnyone
+		}
+		perm, err := createPermissions(s.service, string(fileID), &drive.Permission{
+			AllowFileDiscovery: permission.AllowFileDiscovery(),
+			EmailAddress:       email,
+			Domain:             domain,
+			Id:                 string(permission.ID()),
+			Role:               string(permission.Role()),
+			Type:               granteeType,
+		})
+		if err != nil {
+			return nil, newDriveError("failed to set permission", err)
+		}
+		perms = append(perms, perm)
+	}
+
+	return newPermissions(perms), nil
+}
+
+func (s *DriveFS) PermDel(fileID FileID, grantee Grantee) (permissions []Permission, err error) {
+	perms, err := listPermissions(s.service, string(fileID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete permissions: %w", err)
+	}
+
+	remainedPermissions := []*drive.Permission{}
+	for _, perm := range perms {
+		if granteeMatch(perm, grantee) {
+			err := deletePermissions(s.service, string(fileID), perm.Id)
+			if err != nil {
+				return nil, newDriveError("failed to delete permission", err)
+			}
+		} else {
+			remainedPermissions = append(remainedPermissions, perm)
+		}
+	}
+
+	return newPermissions(perms), nil
+}
+
 // MkdirAll creates all directories along the given path if they do not already exist and returns the ID of the last created directory.
 func (s *DriveFS) MkdirAll(path Path) (info FileInfo, err error) {
 	parts, err := validateAndSplitPath(string(path))
@@ -223,8 +300,8 @@ func (s *DriveFS) Rename(fileID FileID, newName string) (info FileInfo, err erro
 	return newFileInfo(f)
 }
 
-// ResolveByPath resolves the given absolute path from the root directory and returns a slice of FileInfo for all files and directories that match the path.
-func (s *DriveFS) ResolveByPath(path Path) (info []FileInfo, err error) {
+// FindByPath resolves the given absolute path from the root directory and returns a slice of FileInfo for all files and directories that match the path.
+func (s *DriveFS) FindByPath(path Path) (info []FileInfo, err error) {
 	parts, err := validateAndSplitPath(string(path))
 	if err != nil {
 		return nil, fmt.Errorf("path validation failed: %w", err)
@@ -369,8 +446,10 @@ func escapeQuery(s string) string {
 }
 
 const (
-	driveFileFields  = "parents,id,name,mimeType,size,modifiedTime,shortcutDetails"
-	driveFilesFields = "nextPageToken,files(parents,id,name,mimeType,size,modifiedTime,shortcutDetails)"
+	driveFileFields        = "parents,id,name,mimeType,size,modifiedTime,shortcutDetails,webViewLink"
+	driveFilesFields       = "nextPageToken,files(parents,id,name,mimeType,size,modifiedTime,shortcutDetails,webViewLink)"
+	drivePermissionFields  = "id,type,emailAddress,domain,role,allowFileDiscovery"
+	drivePermissionsFields = "nextPageToken,permissions(id,type,emailAddress,domain,role,allowFileDiscovery)"
 )
 
 func newFileInfo(f *drive.File) (FileInfo, error) {
@@ -386,6 +465,7 @@ func newFileInfo(f *drive.File) (FileInfo, error) {
 		Mime:           f.MimeType,
 		ModTime:        modTime,
 		ShortcutTarget: shortcutTarget,
+		WebViewLink:    f.WebViewLink,
 	}, nil
 }
 
@@ -540,6 +620,91 @@ func uploadFile(s *drive.Service, fileID string, data []byte) (err error) {
 		Do()
 	if err != nil {
 		return newDriveError("failed to upload file", err)
+	}
+	return nil
+}
+
+func newPermissions(perms []*drive.Permission) (permissions []Permission) {
+	for _, perm := range perms {
+		var grantee Grantee
+		switch perm.Type {
+		case granteeTypeUser:
+			grantee = User(perm.EmailAddress)
+		case granteeTypeGroup:
+			grantee = Group(perm.EmailAddress)
+		case granteeTypeDomain:
+			grantee = Domain(perm.EmailAddress)
+		case granteeTypeAnyone:
+			grantee = Anyone()
+		}
+		permissions = append(permissions, permission{
+			grantee:            grantee,
+			role:               Role(perm.Role),
+			id:                 PermissionID(perm.Id),
+			allowFileDiscovery: perm.AllowFileDiscovery,
+		})
+	}
+	return permissions
+}
+
+func granteeMatch(perm *drive.Permission, grantee Grantee) bool {
+	switch grantee := grantee.(type) {
+	case GranteeUser:
+		return perm.Type == granteeTypeUser && perm.EmailAddress == grantee.Email
+	case GranteeGroup:
+		return perm.Type == granteeTypeGroup && perm.EmailAddress == grantee.Email
+	case GranteeDomain:
+		return perm.Type == granteeTypeDomain && perm.Domain == grantee.Domain
+	case GranteeAnyone:
+		return perm.Type == granteeTypeAnyone
+	}
+	return false
+}
+
+func listPermissions(service *drive.Service, fileID string) ([]*drive.Permission, error) {
+	var permissions []*drive.Permission
+	err := service.Permissions.List(fileID).
+		SupportsAllDrives(true).
+		Fields(drivePermissionsFields).
+		Pages(context.Background(), func(list *drive.PermissionList) error {
+			permissions = append(permissions, list.Permissions...)
+			return nil
+		})
+	if err != nil {
+		return nil, newDriveError("failed to list permissions", err)
+	}
+	return permissions, nil
+}
+
+func updatePermissions(s *drive.Service, fileID string, perm *drive.Permission) (err error) {
+	_, err = s.Permissions.Update(fileID, perm.Id, perm).
+		SupportsAllDrives(true).
+		Fields(drivePermissionFields).
+		Do()
+	if err != nil {
+		return newDriveError("failed to set permission", err)
+	}
+	return nil
+}
+
+func createPermissions(s *drive.Service, fileID string, perm *drive.Permission) (permission *drive.Permission, err error) {
+	permission, err = s.Permissions.Create(fileID, perm).
+		SupportsAllDrives(true).
+		Fields(drivePermissionFields).
+		Do()
+	if err != nil {
+		return nil, newDriveError("failed to set permission", err)
+	}
+	return permission, nil
+}
+
+func deletePermissions(s *drive.Service, fileID, permID string) (err error) {
+	err = s.Permissions.Delete(fileID, permID).
+		SupportsAllDrives(true).
+		Fields(drivePermissionFields).
+		Do()
+	if err != nil {
+		return newDriveError("failed to set permission", err)
 	}
 	return nil
 }
