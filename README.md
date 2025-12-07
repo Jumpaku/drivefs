@@ -49,7 +49,7 @@ func main() {
     }
     
     // Create and write a file
-    fileInfo, err := driveFS.Create(dirInfo.ID, "notes.txt", false)
+    fileInfo, err := driveFS.Create(dirInfo.ID, "notes.txt")
     if err != nil {
         log.Fatal(err)
     }
@@ -112,8 +112,7 @@ func main() {
 	fmt.Printf("Created directory: %s (ID: %s)\n", dirInfo.Name, dirInfo.ID)
 
 	// Create a file in the directory
-	// Set errorOnDuplicate to true to return an error if a file with the same name exists
-	fileInfo, err := driveFS.Create(dirInfo.ID, "example.txt", false)
+	fileInfo, err := driveFS.Create(dirInfo.ID, "example.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -133,7 +132,7 @@ func main() {
 	fmt.Println("File content:", string(data))
 
 	// Get file metadata
-	info, err := driveFS.Stat(fileInfo.ID)
+	info, err := driveFS.Info(fileInfo.ID)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -150,7 +149,7 @@ func main() {
 
 	// Resolve paths to get FileInfo
 	// Returns all matching files (multiple if duplicates exist at any level)
-	resolvedInfos, err := driveFS.ResolveFilesByPath("/path/to/directory/example.txt")
+	resolvedInfos, err := driveFS.ResolveByPath("/path/to/directory/example.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -250,22 +249,20 @@ Creates all directories along the given path if they do not already exist.
 - If multiple directories with the same name exist at any level, returns `ErrAlreadyExists`
 
 ```go
-func (s *DriveFS) Mkdir(parentID FileID, name string, errorOnDuplicate bool) (FileInfo, error)
+func (s *DriveFS) Mkdir(parentID FileID, name string) (FileInfo, error)
 ```
 
 Creates a single directory with the given name under the specified parent.
-- If `errorOnDuplicate` is `true`, returns `ErrAlreadyExists` if a directory with the same name already exists
-- If `errorOnDuplicate` is `false`, creates a new directory even if one with the same name exists
+- Creates a new directory even if one with the same name already exists (Google Drive allows duplicates)
 
 #### File Operations
 
 ```go
-func (s *DriveFS) Create(parentID FileID, name string, errorOnDuplicate bool) (FileInfo, error)
+func (s *DriveFS) Create(parentID FileID, name string) (FileInfo, error)
 ```
 
 Creates a new empty file in the specified parent directory.
-- If `errorOnDuplicate` is `true`, returns `ErrAlreadyExists` if a file with the same name already exists
-- If `errorOnDuplicate` is `false`, creates a new file even if one with the same name exists
+- Creates a new file even if one with the same name already exists (Google Drive allows duplicates)
 
 ```go
 func (s *DriveFS) ReadFile(fileID FileID) ([]byte, error)
@@ -281,10 +278,20 @@ func (s *DriveFS) WriteFile(fileID FileID, data []byte) error
 
 Writes data to an existing file, completely replacing its contents.
 
+```go
+func (s *DriveFS) Shortcut(parentID FileID, name string, targetID FileID) (FileInfo, error)
+```
+
+Creates a shortcut (link) to another file or directory.
+- `parentID`: The directory where the shortcut will be created
+- `name`: The name of the shortcut
+- `targetID`: The ID of the file or directory that the shortcut points to
+- Returns the FileInfo of the created shortcut
+
 #### Metadata and Navigation
 
 ```go
-func (s *DriveFS) Stat(fileID FileID) (FileInfo, error)
+func (s *DriveFS) Info(fileID FileID) (FileInfo, error)
 ```
 
 Returns the FileInfo (metadata) for the file or directory with the given ID.
@@ -298,7 +305,7 @@ Lists all files and directories directly within the specified directory.
 - Returns only immediate children (not recursive)
 
 ```go
-func (s *DriveFS) ResolveFilesByPath(path Path) ([]FileInfo, error)
+func (s *DriveFS) ResolveByPath(path Path) ([]FileInfo, error)
 ```
 
 Resolves an absolute path (relative to the root) and returns all matching FileInfo objects.
@@ -340,22 +347,22 @@ Moves a file or directory to a new parent directory.
 - Does not change the file's name
 
 ```go
-func (s *DriveFS) Remove(fileID FileID, trash bool) error
+func (s *DriveFS) Remove(fileID FileID, moveToTrash bool) error
 ```
 
 Removes a file or directory.
-- If `trash` is `true`, the item is moved to Google Drive trash
-- If `trash` is `false`, the item is permanently deleted
+- If `moveToTrash` is `true`, the item is moved to Google Drive trash
+- If `moveToTrash` is `false`, the item is permanently deleted
 - Returns `ErrNotRemovable` if attempting to remove a non-empty directory
 - For non-empty directories, use `RemoveAll` instead
 
 ```go
-func (s *DriveFS) RemoveAll(fileID FileID, trash bool) error
+func (s *DriveFS) RemoveAll(fileID FileID, moveToTrash bool) error
 ```
 
 Removes a file or directory and all its contents recursively.
-- If `trash` is `true`, items are moved to Google Drive trash
-- If `trash` is `false`, items are permanently deleted
+- If `moveToTrash` is `true`, items are moved to Google Drive trash
+- If `moveToTrash` is `false`, items are permanently deleted
 - Safe to use on both files and directories
 
 #### Tree Walking
@@ -395,11 +402,12 @@ An absolute path string representing a location in the Drive filesystem.
 
 ```go
 type FileInfo struct {
-    Name    string    // File or directory name
-    ID      FileID    // Unique Google Drive ID
-    Size    int64     // File size in bytes (0 for directories)
-    Mime    string    // MIME type (e.g., "text/plain", "application/vnd.google-apps.folder")
-    ModTime time.Time // Last modification time
+    Name           string    // File or directory name
+    ID             FileID    // Unique Google Drive ID
+    Size           int64     // File size in bytes (0 for directories)
+    Mime           string    // MIME type (e.g., "text/plain", "application/vnd.google-apps.folder")
+    ModTime        time.Time // Last modification time
+    ShortcutTarget FileID    // Target file ID (for shortcuts only, empty otherwise)
 }
 ```
 
@@ -411,6 +419,12 @@ Contains metadata about a file or directory.
 func (i FileInfo) IsFolder() bool
 ```
 Returns `true` if the item is a folder/directory.
+
+```go
+func (i FileInfo) IsShortcut() bool
+```
+Returns `true` if the item is a shortcut to another file or directory.
+The target file ID can be found in the `ShortcutTarget` field.
 
 ```go
 func (i FileInfo) IsAppFile() bool
@@ -441,7 +455,7 @@ var (
 - **`ErrDriveError`** - Returned when a Google Drive API call fails (wraps the underlying API error)
 - **`ErrIOError`** - Returned when an I/O operation fails (e.g., reading response body)
 - **`ErrNotFound`** - Returned when a requested file or directory is not found
-- **`ErrAlreadyExists`** - Returned when attempting to create a file or directory with `errorOnDuplicate=true` and an item with that name already exists, or when `MkdirAll` encounters multiple directories with the same name
+- **`ErrAlreadyExists`** - Returned when `MkdirAll` encounters multiple directories with the same name at any level in the path
 - **`ErrMultiParentsNotSupported`** - Returned by `ResolvePath` when attempting to resolve the path of a file that has multiple parents (Google Drive allows files to have multiple parents, but this library doesn't support path resolution for such files)
 - **`ErrNotReadable`** - Returned by `ReadFile` when attempting to read a Google Apps file (Docs, Sheets, Slides, etc.), which cannot be downloaded as raw bytes
 - **`ErrNotRemovable`** - Returned by `Remove` when attempting to remove a non-empty directory (use `RemoveAll` instead)
@@ -470,13 +484,13 @@ if err != nil {
 ## Features
 
 - ✅ **File and Directory Operations**: Create, read, write, copy, rename, move, and delete files and directories
+- ✅ **Shortcut Support**: Create shortcuts (links) to files and directories
 - ✅ **Path-Based Operations**: Use familiar path strings like `/folder/subfolder/file.txt`
 - ✅ **Path Resolution**: Convert between file IDs and absolute paths
 - ✅ **Tree Walking**: Recursively traverse directory structures with the `Walk` function
 - ✅ **Shared Drive Support**: Full support for both My Drive and Shared Drives
 - ✅ **Comprehensive Error Handling**: Well-defined error constants that can be checked with `errors.Is()`
 - ✅ **Google Apps File Detection**: Identify Google Docs, Sheets, Slides, and other Apps files
-- ✅ **Duplicate Handling**: Control whether to allow or prevent duplicate file names
 - ✅ **Trash Support**: Choose between moving items to trash or permanently deleting them
 
 ## Authentication
@@ -559,10 +573,9 @@ driveFS, err := drivefs.New(service, "root")
 
 Google Drive's file system differs from traditional filesystems in that it allows multiple files or folders with the same name in the same parent directory.
 
-- Use the `errorOnDuplicate` parameter in `Create()` and `Mkdir()` to control this behavior:
-  - `errorOnDuplicate=true`: Returns `ErrAlreadyExists` if an item with that name already exists
-  - `errorOnDuplicate=false`: Creates a new item even if one with the same name exists
-- `ResolveFilesByPath()` returns **all** matching items when duplicates exist
+- `Create()` and `Mkdir()` will create new items even if items with the same name already exist
+- To avoid duplicates, check existing items with `ReadDir()` before creating
+- `ResolveByPath()` returns **all** matching items when duplicates exist
 - `MkdirAll()` returns an error if it encounters multiple directories with the same name at any level
 
 ### Google Apps Files
@@ -585,9 +598,9 @@ Google Drive allows files to have multiple parent directories:
 ### Trashed Items
 
 - Trashed items are automatically excluded from `ReadDir()` and path resolution operations
-- Use the `trash` parameter in `Remove()` and `RemoveAll()`:
-  - `trash=true`: Items can be restored from Google Drive trash
-  - `trash=false`: Items are permanently deleted
+- Use the `moveToTrash` parameter in `Remove()` and `RemoveAll()`:
+  - `moveToTrash=true`: Items can be restored from Google Drive trash
+  - `moveToTrash=false`: Items are permanently deleted
 
 ### Shared Drives
 
