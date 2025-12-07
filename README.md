@@ -512,6 +512,9 @@ See the [Google Drive API Go Quickstart](https://developers.google.com/drive/api
 ```go
 import (
     "context"
+    "log"
+    "os"
+    
     "golang.org/x/oauth2/google"
     "google.golang.org/api/drive/v3"
     "google.golang.org/api/option"
