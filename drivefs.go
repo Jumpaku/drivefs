@@ -61,7 +61,16 @@ func (s *DriveFS) MkdirAll(path Path) (info FileInfo, err error) {
 }
 
 // Mkdir creates a directory with the given name and returns the ID of the created directory.
-func (s *DriveFS) Mkdir(parentID FileID, name string) (info FileInfo, err error) {
+// If errorOnDuplicate is true, an error is returned if a directory with the same name already exists in the parent directory.
+// Otherwise, a new directory is created.
+func (s *DriveFS) Mkdir(parentID FileID, name string, errorOnDuplicate bool) (info FileInfo, err error) {
+	alreadyExists, err := existsByNameIn(s, string(parentID), name)
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("failed to find parent directory '%s': %w", parentID, err)
+	}
+	if errorOnDuplicate && alreadyExists {
+		return FileInfo{}, fmt.Errorf("directory with name '%s' already exists in directory '%s': %w", name, parentID, ErrAlreadyExists)
+	}
 	f, err := createDirIn(s, string(parentID), name)
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("failed to create directory: %w", err)
