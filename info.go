@@ -6,22 +6,28 @@ import (
 )
 
 const (
-	mimeTypeGoogleAppFolder = "application/vnd.google-apps.folder"
-	mimeTypePrefixGoogleApp = "application/vnd.google-apps."
+	mimeTypeGoogleAppFolder   = "application/vnd.google-apps.folder"
+	mimeTypeGoogleAppShortcut = "application/vnd.google-apps.shortcut"
+	mimeTypePrefixGoogleApp   = "application/vnd.google-apps."
 )
 
 type FileID string
 
 type FileInfo struct {
-	Name    string
-	ID      FileID
-	Size    int64
-	Mime    string
-	ModTime time.Time
+	Name           string
+	ID             FileID
+	Size           int64
+	Mime           string
+	ModTime        time.Time
+	ShortcutTarget FileID
 }
 
 func (i FileInfo) IsFolder() bool {
 	return i.Mime == mimeTypeGoogleAppFolder
+}
+
+func (i FileInfo) IsShortcut() bool {
+	return i.Mime == mimeTypeGoogleAppShortcut
 }
 
 func (i FileInfo) IsAppFile() bool {

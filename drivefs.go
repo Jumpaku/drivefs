@@ -54,7 +54,7 @@ func (s *DriveFS) MkdirAll(path Path) (info FileInfo, err error) {
 			return FileInfo{}, fmt.Errorf("failed to find directory '%s' in '%s': %w", p, currentID, err)
 		}
 		if len(files) > 1 {
-			return FileInfo{}, fmt.Errorf("multiple directory '%s' already exists in '%s': %w", p, currentID, ErrAlreadyExists)
+			return FileInfo{}, fmt.Errorf("multiple directories '%s' already exist in '%s': %w", p, currentID, ErrAlreadyExists)
 		}
 		if len(files) == 1 {
 			file = files[0]
@@ -71,16 +71,7 @@ func (s *DriveFS) MkdirAll(path Path) (info FileInfo, err error) {
 }
 
 // Mkdir creates a directory with the given name and returns the ID of the created directory.
-// If errorOnDuplicate is true, an error is returned if a directory with the same name already exists in the parent directory.
-// Otherwise, a new directory is created.
-func (s *DriveFS) Mkdir(parentID FileID, name string, errorOnDuplicate bool) (info FileInfo, err error) {
-	alreadyExists, err := existsByNameIn(s.service, string(parentID), name)
-	if err != nil {
-		return FileInfo{}, fmt.Errorf("failed to find parent directory '%s': %w", parentID, err)
-	}
-	if errorOnDuplicate && alreadyExists {
-		return FileInfo{}, fmt.Errorf("directory with name '%s' already exists in directory '%s': %w", name, parentID, ErrAlreadyExists)
-	}
+func (s *DriveFS) Mkdir(parentID FileID, name string) (info FileInfo, err error) {
 	f, err := createDirIn(s.service, string(parentID), name)
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("failed to create directory: %w", err)
@@ -94,7 +85,7 @@ func (s *DriveFS) ReadFile(fileID FileID) (data []byte, err error) {
 }
 
 // Remove moves the file or directory with the given fileID to the trash.
-func (s *DriveFS) Remove(fileID FileID, trash bool) (err error) {
+func (s *DriveFS) Remove(fileID FileID, moveToTrash bool) (err error) {
 	file, found, err := findByID(s.service, string(fileID))
 	if err != nil {
 		return fmt.Errorf("failed to find file: %w", err)
@@ -112,17 +103,17 @@ func (s *DriveFS) Remove(fileID FileID, trash bool) (err error) {
 		}
 	}
 
-	return s.RemoveAll(fileID, trash)
+	return s.RemoveAll(fileID, moveToTrash)
 }
 
 // RemoveAll moves the file or directory with the given fileID to the trash or deletes it permanently.
-func (s *DriveFS) RemoveAll(fileID FileID, trash bool) (err error) {
-	if trash {
+func (s *DriveFS) RemoveAll(fileID FileID, moveToTrash bool) (err error) {
+	if moveToTrash {
 		_, err := s.service.Files.Update(string(fileID), &drive.File{Trashed: true}).
 			SupportsAllDrives(true).
 			Do()
 		if err != nil {
-			return newDriveError("failed to trash file", err)
+			return newDriveError("failed to move file to trash", err)
 		}
 		return nil
 	} else {
@@ -178,16 +169,7 @@ func (s *DriveFS) ReadDir(fileID FileID) (children []FileInfo, err error) {
 }
 
 // Create creates a new file with the given name in the directory with the given parentID.
-// If errorOnDuplicate is true, an error is returned if a file with the same name already exists in the directory.
-// Otherwise, a new file is created.
-func (s *DriveFS) Create(parentID FileID, name string, errorOnDuplicate bool) (info FileInfo, err error) {
-	alreadyExists, err := existsByNameIn(s.service, string(parentID), name)
-	if err != nil {
-		return FileInfo{}, fmt.Errorf("failed to find parent directory '%s': %w", parentID, err)
-	}
-	if errorOnDuplicate && alreadyExists {
-		return FileInfo{}, fmt.Errorf("file with name '%s' already exists in directory '%s': %w", name, parentID, ErrAlreadyExists)
-	}
+func (s *DriveFS) Create(parentID FileID, name string) (info FileInfo, err error) {
 	f, err := createFileIn(s.service, string(parentID), name)
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("failed to create file: %w", err)
@@ -195,8 +177,17 @@ func (s *DriveFS) Create(parentID FileID, name string, errorOnDuplicate bool) (i
 	return newFileInfo(f)
 }
 
-// Stat returns the FileInfo for the file with the given fileID.
-func (s *DriveFS) Stat(fileID FileID) (info FileInfo, err error) {
+// Shortcut creates a new shortcut to the file with the given targetID in the directory with the given parentID.
+func (s *DriveFS) Shortcut(parentID FileID, name string, targetID FileID) (info FileInfo, err error) {
+	f, err := createShortcutIn(s.service, string(parentID), name, string(targetID))
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("failed to create shortcut: %w", err)
+	}
+	return newFileInfo(f)
+}
+
+// Info returns the FileInfo for the file with the given fileID.
+func (s *DriveFS) Info(fileID FileID) (info FileInfo, err error) {
 	f, found, err := findByID(s.service, string(fileID))
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("failed to get file info '%s': %w", fileID, err)
@@ -232,8 +223,8 @@ func (s *DriveFS) Rename(fileID FileID, newName string) (info FileInfo, err erro
 	return newFileInfo(f)
 }
 
-// ResolveFilesByPath resolves the given absolute path from the root directory and returns a slice of FileInfo for all files and directories that match the path.
-func (s *DriveFS) ResolveFilesByPath(path Path) (info []FileInfo, err error) {
+// ResolveByPath resolves the given absolute path from the root directory and returns a slice of FileInfo for all files and directories that match the path.
+func (s *DriveFS) ResolveByPath(path Path) (info []FileInfo, err error) {
 	parts, err := validateAndSplitPath(string(path))
 	if err != nil {
 		return nil, fmt.Errorf("path validation failed: %w", err)
@@ -245,7 +236,7 @@ func (s *DriveFS) ResolveFilesByPath(path Path) (info []FileInfo, err error) {
 	if !found {
 		return nil, nil
 	}
-	err = dfsResolveFilesByPath(s, file, 0, parts, func(i FileInfo) error {
+	err = searchFileInfo(s.service, file, 0, parts, func(i FileInfo) error {
 		info = append(info, i)
 		return nil
 	})
@@ -261,6 +252,23 @@ func (s *DriveFS) ResolvePath(fileID FileID) (path Path, err error) {
 	parts, err := resolvePathParts(s, fileID)
 	return Path("/" + strings.Join(parts, "/")), nil
 }
+
+// Walk walks the file tree rooted at fileID, calling f for each file or directory in the tree, including fileID itself.
+func (s *DriveFS) Walk(fileID FileID, f func(Path, FileInfo) error) (err error) {
+	file, found, err := findByID(s.service, string(fileID))
+	if err != nil {
+		return fmt.Errorf("failed to get file info: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("file not found: %s: %w", fileID, ErrNotFound)
+	}
+	parts, err := resolvePathParts(s, fileID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve path: %w", err)
+	}
+	return walk(s, parts, file, f)
+}
+
 func resolvePathParts(s *DriveFS, fileID FileID) (parts []string, err error) {
 	currentID := string(fileID)
 	for {
@@ -287,23 +295,7 @@ func resolvePathParts(s *DriveFS, fileID FileID) (parts []string, err error) {
 	return parts, nil
 }
 
-// Walk walks the file tree rooted at fileID, calling f for each file or directory in the tree, including fileID itself.
-func (s *DriveFS) Walk(fileID FileID, f func(Path, FileInfo) error) (err error) {
-	file, found, err := findByID(s.service, string(fileID))
-	if err != nil {
-		return fmt.Errorf("failed to get file info: %w", err)
-	}
-	if !found {
-		return fmt.Errorf("file not found: %s: %w", fileID, ErrNotFound)
-	}
-	parts, err := resolvePathParts(s, fileID)
-	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
-	}
-	return walk(s, parts, file, f)
-}
-
-func dfsResolveFilesByPath(s *DriveFS, file *drive.File, partIndex int, parts []string, onPathMatch func(FileInfo) error) (err error) {
+func searchFileInfo(s *drive.Service, file *drive.File, partIndex int, parts []string, onPathMatch func(FileInfo) error) (err error) {
 	info, err := newFileInfo(file)
 	if err != nil {
 		return fmt.Errorf("failed to create FileInfo: %w", err)
@@ -314,12 +306,12 @@ func dfsResolveFilesByPath(s *DriveFS, file *drive.File, partIndex int, parts []
 	if file.MimeType != mimeTypeGoogleAppFolder {
 		return nil
 	}
-	files, err := findAllByNameIn(s.service, file.Id, parts[partIndex])
+	files, err := findAllByNameIn(s, file.Id, parts[partIndex])
 	if err != nil {
 		return fmt.Errorf("failed to list files: %w", err)
 	}
 	for _, file := range files {
-		if err := dfsResolveFilesByPath(s, file, partIndex+1, parts, onPathMatch); err != nil {
+		if err := searchFileInfo(s, file, partIndex+1, parts, onPathMatch); err != nil {
 			return err
 		}
 	}
@@ -377,18 +369,23 @@ func escapeQuery(s string) string {
 }
 
 const (
-	driveFileFields  = "parents,id,name,mimeType,size,modifiedTime"
-	driveFilesFields = "nextPageToken,files(parents,id,name,mimeType,size,modifiedTime)"
+	driveFileFields  = "parents,id,name,mimeType,size,modifiedTime,shortcutDetails"
+	driveFilesFields = "nextPageToken,files(parents,id,name,mimeType,size,modifiedTime,shortcutDetails)"
 )
 
 func newFileInfo(f *drive.File) (FileInfo, error) {
 	modTime, _ := time.Parse(time.RFC3339, f.ModifiedTime)
+	var shortcutTarget FileID
+	if f.ShortcutDetails != nil {
+		shortcutTarget = FileID(f.ShortcutDetails.TargetId)
+	}
 	return FileInfo{
-		Name:    f.Name,
-		ID:      FileID(f.Id),
-		Size:    f.Size,
-		Mime:    f.MimeType,
-		ModTime: modTime,
+		Name:           f.Name,
+		ID:             FileID(f.Id),
+		Size:           f.Size,
+		Mime:           f.MimeType,
+		ModTime:        modTime,
+		ShortcutTarget: shortcutTarget,
 	}, nil
 }
 
@@ -407,21 +404,6 @@ func findAllByNameIn(s *drive.Service, parentID string, name string) (files []*d
 		return nil, newDriveError("failed to list files", err)
 	}
 	return files, nil
-}
-
-func existsByNameIn(s *drive.Service, parentID string, name string) (exists bool, err error) {
-	q := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false", escapeQuery(name), parentID)
-	resp, err := s.Files.List().
-		SupportsAllDrives(true).
-		IncludeItemsFromAllDrives(true).
-		Q(q).
-		Fields(driveFilesFields).
-		PageSize(1).
-		Do()
-	if err != nil {
-		return false, newDriveError("failed to list files", err)
-	}
-	return len(resp.Files) != 0, nil
 }
 
 func existsIn(s *drive.Service, parentID string) (found bool, err error) {
@@ -498,6 +480,22 @@ func createFileIn(s *drive.Service, parentID, name string) (file *drive.File, er
 		Do()
 	if err != nil {
 		return nil, newDriveError("failed to create file", err)
+	}
+	return file, nil
+}
+
+func createShortcutIn(s *drive.Service, parentID, name, targetID string) (file *drive.File, err error) {
+	file, err = s.Files.Create(&drive.File{
+		Name:            name,
+		MimeType:        mimeTypeGoogleAppShortcut,
+		Parents:         []string{parentID},
+		ShortcutDetails: &drive.FileShortcutDetails{TargetId: targetID},
+	}).
+		SupportsAllDrives(true).
+		Fields(driveFileFields).
+		Do()
+	if err != nil {
+		return nil, newDriveError("failed to create shortcut", err)
 	}
 	return file, nil
 }
