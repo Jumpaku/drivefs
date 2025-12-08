@@ -39,7 +39,7 @@ func TestErrVars_IsAndMessage(t *testing.T) {
 		t.Run(c.name+"/Message", func(t *testing.T) {
 			wrapped := fmt.Errorf("higher: %w", c.err)
 			if !strings.Contains(wrapped.Error(), c.msg) {
-				t.Fatalf("%s.Error() = %q does not contain %q", c.name, c.err.Error(), c.msg)
+				t.Fatalf("%s.Error() = %q does not contain %q", c.name, wrapped.Error(), c.msg)
 			}
 		})
 	}
