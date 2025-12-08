@@ -1,6 +1,6 @@
 # drivefs
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/Jumpaku/drivefs.svg)](https://pkg.go.dev/github.com/Jumpaku/drivefs)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Jumpaku/go-drivefs.svg)](https://pkg.go.dev/github.com/Jumpaku/go-drivefs)
 [![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD_2--Clause-blue.svg)](https://opensource.org/licenses/BSD-2-Clause)
 
 A Go module that provides a file system-like interface for Google Drive operations.
@@ -12,7 +12,7 @@ A Go module that provides a file system-like interface for Google Drive operatio
 ## Installation
 
 ```bash
-go get github.com/Jumpaku/drivefs
+go get github.com/Jumpaku/go-drivefs
 ```
 
 **Requirements:**
@@ -27,7 +27,7 @@ package main
 import (
     "fmt"
     "log"
-    "github.com/Jumpaku/drivefs"
+    "github.com/Jumpaku/go-drivefs"
     "google.golang.org/api/drive/v3"
 )
 
@@ -79,7 +79,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Jumpaku/drivefs"
+	"github.com/Jumpaku/go-drivefs"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
 )
@@ -632,7 +632,7 @@ var (
 ```go
 import (
     "errors"
-    "github.com/Jumpaku/drivefs"
+    "github.com/Jumpaku/go-drivefs"
 )
 
 data, err := driveFS.ReadFile(fileID)
