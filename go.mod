@@ -2,7 +2,10 @@ module github.com/Jumpaku/go-drivefs
 
 go 1.24.10
 
-require google.golang.org/api v0.257.0
+require (
+	golang.org/x/oauth2 v0.33.0
+	google.golang.org/api v0.257.0
+)
 
 require (
 	cloud.google.com/go/auth v0.17.0 // indirect
@@ -22,7 +25,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.38.0 // indirect
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/oauth2 v0.33.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251124214823-79d6a2a48846 // indirect
