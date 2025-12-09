@@ -336,13 +336,13 @@ func (s *DriveFS) ResolvePath(fileID FileID) (path Path, err error) {
 }
 
 // Walk walks the file tree rooted at fileID, calling f for each file or directory in the tree, including fileID itself.
-func (s *DriveFS) Walk(fileID FileID, f func(Path, FileInfo) error) (err error) {
-	file, found, err := findByID(s.service, string(fileID))
+func (s *DriveFS) Walk(rootID FileID, f func(Path, FileInfo) error) (err error) {
+	file, found, err := findByID(s.service, string(rootID))
 	if err != nil {
 		return fmt.Errorf("failed to get file info: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("file not found: %s: %w", fileID, ErrNotFound)
+		return fmt.Errorf("file not found: %s: %w", rootID, ErrNotFound)
 	}
 	return walk(s, []string{}, file, f)
 }
