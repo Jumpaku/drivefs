@@ -485,19 +485,7 @@ func newFileInfo(f *drive.File) (FileInfo, error) {
 
 func findAllByNameIn(s *drive.Service, parentID string, name string) (files []*drive.File, err error) {
 	q := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false", escapeQuery(name), parentID)
-	err = s.Files.List().
-		SupportsAllDrives(true).
-		IncludeItemsFromAllDrives(true).
-		Q(q).
-		Fields(driveFilesFields).
-		Pages(context.Background(), func(list *drive.FileList) error {
-			files = append(files, list.Files...)
-			return nil
-		})
-	if err != nil {
-		return nil, newDriveError("failed to list files", err)
-	}
-	return files, nil
+	return queryFileInfo(s, q)
 }
 
 func existsIn(s *drive.Service, parentID string) (found bool, err error) {
@@ -534,19 +522,7 @@ func findByID(s *drive.Service, fileID string) (file *drive.File, found bool, er
 
 func findAllIn(s *drive.Service, parentID string) (files []*drive.File, err error) {
 	q := fmt.Sprintf("'%s' in parents and trashed = false", parentID)
-	err = s.Files.List().
-		SupportsAllDrives(true).
-		IncludeItemsFromAllDrives(true).
-		Q(q).
-		Fields(driveFilesFields).
-		Pages(nil, func(page *drive.FileList) error {
-			files = append(files, page.Files...)
-			return nil
-		})
-	if err != nil {
-		return nil, newDriveError("failed to list files", err)
-	}
-	return files, nil
+	return queryFileInfo(s, q)
 }
 
 func createDirIn(s *drive.Service, parentID, name string) (file *drive.File, err error) {
