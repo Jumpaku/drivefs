@@ -16,22 +16,11 @@ import (
 
 type DriveFS struct {
 	service *drive.Service
-	rootID  string
 }
 
 // New creates a new DriveFS instance with the given drive.Service.
-func New(service *drive.Service, rootID FileID) (*DriveFS, error) {
-	if rootID == "" {
-		rootID = "root"
-	}
-	if rootID == "root" {
-		f, _, err := findByID(service, string(rootID))
-		if err != nil {
-			return nil, fmt.Errorf("failed to find root directory: %w", err)
-		}
-		rootID = FileID(f.Id)
-	}
-	return &DriveFS{service: service, rootID: string(rootID)}, nil
+func New(service *drive.Service) *DriveFS {
+	return &DriveFS{service: service}
 }
 
 func (s *DriveFS) PermList(fileID FileID) (permissions []Permission, err error) {
@@ -112,12 +101,12 @@ func (s *DriveFS) PermDel(fileID FileID, grantee Grantee) (permissions []Permiss
 }
 
 // MkdirAll creates all directories along the given path if they do not already exist and returns the ID of the last created directory.
-func (s *DriveFS) MkdirAll(path Path) (info FileInfo, err error) {
+func (s *DriveFS) MkdirAll(rootID FileID, path Path) (info FileInfo, err error) {
 	parts, err := validateAndSplitPath(string(path))
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("path validation failed: %w", err)
 	}
-	currentID := s.rootID
+	currentID := string(rootID)
 	file, found, err := findByID(s.service, currentID)
 	if err != nil {
 		return FileInfo{}, err
@@ -300,20 +289,36 @@ func (s *DriveFS) Rename(fileID FileID, newName string) (info FileInfo, err erro
 	return newFileInfo(f)
 }
 
+// Query executes the given query and returns a slice of FileInfo for all files and directories that match the query.
+func (s *DriveFS) Query(query string) (results []FileInfo, err error) {
+	files, err := queryFileInfo(s.service, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query files: %w", err)
+	}
+	for _, f := range files {
+		info, err := newFileInfo(f)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create FileInfo: %w", err)
+		}
+		results = append(results, info)
+	}
+	return results, nil
+}
+
 // FindByPath resolves the given absolute path from the root directory and returns a slice of FileInfo for all files and directories that match the path.
-func (s *DriveFS) FindByPath(path Path) (info []FileInfo, err error) {
+func (s *DriveFS) FindByPath(rootID FileID, path Path) (info []FileInfo, err error) {
 	parts, err := validateAndSplitPath(string(path))
 	if err != nil {
 		return nil, fmt.Errorf("path validation failed: %w", err)
 	}
-	file, found, err := findByID(s.service, s.rootID)
+	file, found, err := findByID(s.service, string(rootID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to find root directory: %w", err)
 	}
 	if !found {
 		return nil, nil
 	}
-	err = searchFileInfo(s.service, file, 0, parts, func(i FileInfo) error {
+	err = dfsFindByPath(s.service, file, 0, parts, func(i FileInfo) error {
 		info = append(info, i)
 		return nil
 	})
@@ -331,27 +336,20 @@ func (s *DriveFS) ResolvePath(fileID FileID) (path Path, err error) {
 }
 
 // Walk walks the file tree rooted at fileID, calling f for each file or directory in the tree, including fileID itself.
-func (s *DriveFS) Walk(fileID FileID, f func(Path, FileInfo) error) (err error) {
-	file, found, err := findByID(s.service, string(fileID))
+func (s *DriveFS) Walk(rootID FileID, f func(Path, FileInfo) error) (err error) {
+	file, found, err := findByID(s.service, string(rootID))
 	if err != nil {
 		return fmt.Errorf("failed to get file info: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("file not found: %s: %w", fileID, ErrNotFound)
+		return fmt.Errorf("file not found: %s: %w", rootID, ErrNotFound)
 	}
-	parts, err := resolvePathParts(s, fileID)
-	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
-	}
-	return walk(s, parts, file, f)
+	return walk(s, []string{}, file, f)
 }
 
 func resolvePathParts(s *DriveFS, fileID FileID) (parts []string, err error) {
 	currentID := string(fileID)
 	for {
-		if currentID == s.rootID {
-			break
-		}
 		f, found, err := findByID(s.service, currentID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get file info: %w", err)
@@ -359,20 +357,36 @@ func resolvePathParts(s *DriveFS, fileID FileID) (parts []string, err error) {
 		if !found {
 			return nil, fmt.Errorf("file not found: %s: %w", currentID, ErrNotFound)
 		}
-		parts = append(parts, f.Name)
 		if len(f.Parents) == 0 {
 			break
 		}
 		if len(f.Parents) > 1 {
 			return nil, fmt.Errorf("failed to resolve path with multiple parents not supported: %w", ErrMultiParentsNotSupported)
 		}
+		parts = append(parts, f.Name)
 		currentID = f.Parents[0]
 	}
 	slices.Reverse(parts)
 	return parts, nil
 }
 
-func searchFileInfo(s *drive.Service, file *drive.File, partIndex int, parts []string, onPathMatch func(FileInfo) error) (err error) {
+func queryFileInfo(s *drive.Service, query string) (results []*drive.File, err error) {
+	err = s.Files.List().
+		SupportsAllDrives(true).
+		IncludeItemsFromAllDrives(true).
+		Q(query).
+		Fields(driveFilesFields).
+		Pages(context.Background(), func(list *drive.FileList) error {
+			results = append(results, list.Files...)
+			return nil
+		})
+	if err != nil {
+		return nil, newDriveError("failed to query files", err)
+	}
+	return results, nil
+}
+
+func dfsFindByPath(s *drive.Service, file *drive.File, partIndex int, parts []string, onPathMatch func(FileInfo) error) (err error) {
 	info, err := newFileInfo(file)
 	if err != nil {
 		return fmt.Errorf("failed to create FileInfo: %w", err)
@@ -388,7 +402,7 @@ func searchFileInfo(s *drive.Service, file *drive.File, partIndex int, parts []s
 		return fmt.Errorf("failed to list files: %w", err)
 	}
 	for _, file := range files {
-		if err := searchFileInfo(s, file, partIndex+1, parts, onPathMatch); err != nil {
+		if err := dfsFindByPath(s, file, partIndex+1, parts, onPathMatch); err != nil {
 			return err
 		}
 	}
@@ -471,19 +485,7 @@ func newFileInfo(f *drive.File) (FileInfo, error) {
 
 func findAllByNameIn(s *drive.Service, parentID string, name string) (files []*drive.File, err error) {
 	q := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false", escapeQuery(name), parentID)
-	err = s.Files.List().
-		SupportsAllDrives(true).
-		IncludeItemsFromAllDrives(true).
-		Q(q).
-		Fields(driveFilesFields).
-		Pages(context.Background(), func(list *drive.FileList) error {
-			files = append(files, list.Files...)
-			return nil
-		})
-	if err != nil {
-		return nil, newDriveError("failed to list files", err)
-	}
-	return files, nil
+	return queryFileInfo(s, q)
 }
 
 func existsIn(s *drive.Service, parentID string) (found bool, err error) {
@@ -520,19 +522,7 @@ func findByID(s *drive.Service, fileID string) (file *drive.File, found bool, er
 
 func findAllIn(s *drive.Service, parentID string) (files []*drive.File, err error) {
 	q := fmt.Sprintf("'%s' in parents and trashed = false", parentID)
-	err = s.Files.List().
-		SupportsAllDrives(true).
-		IncludeItemsFromAllDrives(true).
-		Q(q).
-		Fields(driveFilesFields).
-		Pages(nil, func(page *drive.FileList) error {
-			files = append(files, page.Files...)
-			return nil
-		})
-	if err != nil {
-		return nil, newDriveError("failed to list files", err)
-	}
-	return files, nil
+	return queryFileInfo(s, q)
 }
 
 func createDirIn(s *drive.Service, parentID, name string) (file *drive.File, err error) {
