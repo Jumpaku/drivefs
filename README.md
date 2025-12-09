@@ -16,7 +16,7 @@ go get github.com/Jumpaku/go-drivefs
 ```
 
 **Requirements:**
-- Go 1.24 or later
+- Go 1.24.10 or later
 - An authenticated Google Drive API `*drive.Service`
 
 ## Quick Start
@@ -37,13 +37,13 @@ func main() {
     var service *drive.Service // Your authenticated service
     
     // Create DriveFS instance
-    driveFS, err := drivefs.New(service, "root")
-    if err != nil {
-        log.Fatal(err)
-    }
+    driveFS := drivefs.New(service)
+    
+    // Get the root folder (My Drive)
+    rootID := drivefs.FileID("root")
     
     // Create a directory
-    dirInfo, err := driveFS.MkdirAll("/my-project/data")
+    dirInfo, err := driveFS.MkdirAll(rootID, "/my-project/data")
     if err != nil {
         log.Fatal(err)
     }
@@ -95,17 +95,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Create a new DriveFS instance with a root folder ID
-	// Use "root" or "" for the user's My Drive root, or provide a specific folder ID
+	// Create a new DriveFS instance
+	driveFS := drivefs.New(service)
+
+	// Get the root folder ID
+	// Use "root" for the user's My Drive root, or provide a specific folder ID
 	// for a Shared Drive or subdirectory
-	driveFS, err := drivefs.New(service, "root")
-	if err != nil {
-		log.Fatal(err)
-	}
+	rootID := drivefs.FileID("root")
 
 	// Create a directory structure
 	// MkdirAll creates all directories along the path if they don't exist
-	dirInfo, err := driveFS.MkdirAll("/path/to/directory")
+	dirInfo, err := driveFS.MkdirAll(rootID, "/path/to/directory")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func main() {
 
 	// Find files by path
 	// Returns all matching files (multiple if duplicates exist at any level)
-	resolvedInfos, err := driveFS.FindByPath("/path/to/directory/example.txt")
+	resolvedInfos, err := driveFS.FindByPath(rootID, "/path/to/directory/example.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -158,6 +158,7 @@ func main() {
 	}
 
 	// Get the full path from a file ID
+	// Note: This returns a path without a root prefix
 	path, err := driveFS.ResolvePath(fileInfo.ID)
 	if err != nil {
 		log.Fatal(err)
@@ -165,7 +166,7 @@ func main() {
 	fmt.Printf("Path: %s\n", path)
 
 	// Copy a file to a different directory
-	newParentInfo, err := driveFS.MkdirAll("/new/location")
+	newParentInfo, err := driveFS.MkdirAll(rootID, "/new/location")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -191,7 +192,7 @@ func main() {
 
 	// Walk the file tree
 	// Traverses all files and directories recursively
-	err = driveFS.Walk(dirInfo.ID, func(path drivefs.Path, info drivefs.FileInfo) error {
+	err = driveFS.Walk(rootID, func(path drivefs.Path, info drivefs.FileInfo) error {
 		fmt.Printf("%s: %s (ID: %s)\n", path, info.Name, info.ID)
 		return nil
 	})
@@ -262,23 +263,23 @@ The main type for interacting with Google Drive.
 #### Constructor
 
 ```go
-func New(service *drive.Service, rootID FileID) (*DriveFS, error)
+func New(service *drive.Service) *DriveFS
 ```
 
-Creates a new DriveFS instance with the specified root folder ID.
-- Use `"root"` or `""` (empty string) for the user's My Drive root
-- Use a specific folder ID for a Shared Drive or to use a subdirectory as root
-- Returns an error if the root directory cannot be accessed
-- When `"root"` is provided, it is automatically resolved to the actual My Drive root ID
+Creates a new DriveFS instance with the given Google Drive service.
+- The `service` parameter should be an authenticated `*drive.Service` from the Google Drive API
+- This constructor does not take a root ID; root IDs are passed to individual methods as needed
+- Returns a new DriveFS instance ready to perform operations
 
 #### Directory Operations
 
 ```go
-func (s *DriveFS) MkdirAll(path Path) (FileInfo, error)
+func (s *DriveFS) MkdirAll(rootID FileID, path Path) (FileInfo, error)
 ```
 
 Creates all directories along the given path if they do not already exist.
-- Path must be absolute (start with `/`)
+- `rootID`: The starting point folder ID (use `"root"` for My Drive root, or a specific folder ID)
+- `path`: Must be absolute (start with `/`)
 - Returns the FileInfo of the final directory in the path
 - If multiple directories with the same name exist at any level, returns `ErrAlreadyExists`
 
@@ -339,11 +340,12 @@ Lists all files and directories directly within the specified directory.
 - Returns only immediate children (not recursive)
 
 ```go
-func (s *DriveFS) FindByPath(path Path) ([]FileInfo, error)
+func (s *DriveFS) FindByPath(rootID FileID, path Path) ([]FileInfo, error)
 ```
 
-Resolves an absolute path (relative to the root) and returns all matching FileInfo objects.
-- Path must be absolute (start with `/`)
+Resolves an absolute path (relative to the specified root) and returns all matching FileInfo objects.
+- `rootID`: The starting point folder ID (use `"root"` for My Drive root, or a specific folder ID)
+- `path`: Must be absolute (start with `/`)
 - Returns multiple results if there are duplicate files/folders with the same name at any level
 - Returns an empty slice if the path does not exist
 
@@ -351,9 +353,18 @@ Resolves an absolute path (relative to the root) and returns all matching FileIn
 func (s *DriveFS) ResolvePath(fileID FileID) (Path, error)
 ```
 
-Returns the absolute path from the root directory to the file or directory with the given ID.
+Returns the absolute path from the root to the file or directory with the given ID.
 - Returns `ErrMultiParentsNotSupported` if the file has multiple parents
-- Path is relative to the DriveFS root
+- The path is built by traversing up to the topmost parent (the file with no parents) and returns an absolute path starting with `/`
+
+```go
+func (s *DriveFS) Query(query string) ([]FileInfo, error)
+```
+
+Executes a Google Drive API query and returns all matching files and directories.
+- `query`: A Google Drive API query string (see [Search for files](https://developers.google.com/drive/api/guides/search-files))
+- Returns a slice of FileInfo objects for all matching items
+- Useful for advanced searches that go beyond simple path-based lookups
 
 #### File System Manipulation
 
@@ -402,12 +413,13 @@ Removes a file or directory and all its contents recursively.
 #### Tree Walking
 
 ```go
-func (s *DriveFS) Walk(fileID FileID, f func(Path, FileInfo) error) error
+func (s *DriveFS) Walk(rootID FileID, f func(Path, FileInfo) error) error
 ```
 
 Walks the file tree rooted at the specified file or directory, calling the provided function for each item.
-- Includes the root item itself
-- The function receives both the path and FileInfo for each item
+- `rootID`: The starting point folder ID to begin walking from
+- Includes the root item itself (passed as "/" to the callback)
+- The function receives both the path (starting from "/" for the root item, then its children as "/childname", etc.) and FileInfo for each item
 - If the callback function returns an error, walking stops and that error is returned
 
 #### Permission Management
@@ -726,16 +738,32 @@ if err != nil {
 }
 
 // Now use the service with drivefs
-driveFS, err := drivefs.New(service, "root")
+driveFS := drivefs.New(service)
+
+// Use "root" as the root ID for My Drive operations
+rootID := drivefs.FileID("root")
+dirInfo, err := driveFS.MkdirAll(rootID, "/my-files")
 ```
 
 ## Important Notes
+
+### Root ID Parameter
+
+Unlike traditional filesystem libraries, DriveFS does not bind to a single root directory at construction time. Instead:
+
+- The constructor `New(service)` only takes a Google Drive service
+- Methods that need a starting point (`MkdirAll`, `FindByPath`, `Walk`) accept a `rootID` parameter
+- Use `drivefs.FileID("root")` to reference the user's My Drive root
+- Use any folder ID to start operations from that folder (useful for Shared Drives or subdirectories)
+
+This design allows you to work with multiple roots (e.g., My Drive and Shared Drives) using a single DriveFS instance.
 
 ### Path Requirements
 
 - **Absolute Paths Only**: All path strings must be absolute and start with `/`
 - **No Relative Components**: Paths cannot contain `.` (current directory) or `..` (parent directory) components
 - **Forward Slashes**: Use `/` as the path separator (Unix-style)
+- **Relative to Root**: Paths in `MkdirAll` and `FindByPath` are interpreted relative to the provided `rootID`
 
 ### Duplicate File Names
 
@@ -762,6 +790,7 @@ Google Drive allows files to have multiple parent directories:
 - This library primarily supports single-parent files
 - `ResolvePath()` will return `ErrMultiParentsNotSupported` for files with multiple parents
 - `Move()` removes all existing parents and sets a single new parent
+- When resolving paths, files with multiple parents cannot have an unambiguous path
 
 ### Trashed Items
 
@@ -774,7 +803,7 @@ Google Drive allows files to have multiple parent directories:
 
 - Full support for Shared Drives (formerly Team Drives)
 - All API calls use `SupportsAllDrives(true)` and `IncludeItemsFromAllDrives(true)`
-- Create a DriveFS instance with a Shared Drive root ID to work within that Shared Drive
+- To work within a Shared Drive, pass the Shared Drive root folder ID to methods like `MkdirAll`, `FindByPath`, or `Walk`
 
 ## License
 
