@@ -353,9 +353,9 @@ Resolves an absolute path (relative to the specified root) and returns all match
 func (s *DriveFS) ResolvePath(fileID FileID) (Path, error)
 ```
 
-Returns the absolute path from the file's topmost parent to the file or directory with the given ID.
+Returns the absolute path from the root to the file or directory with the given ID.
 - Returns `ErrMultiParentsNotSupported` if the file has multiple parents
-- The path goes up to the topmost parent (the file with no parents)
+- The path is built by traversing up to the topmost parent (the file with no parents) and returns an absolute path starting with `/`
 
 ```go
 func (s *DriveFS) Query(query string) ([]FileInfo, error)
@@ -418,8 +418,8 @@ func (s *DriveFS) Walk(rootID FileID, f func(Path, FileInfo) error) error
 
 Walks the file tree rooted at the specified file or directory, calling the provided function for each item.
 - `rootID`: The starting point folder ID to begin walking from
-- Includes the root item itself
-- The function receives both the path (relative to the walk root) and FileInfo for each item
+- Includes the root item itself (passed as "/" to the callback)
+- The function receives both the path (starting from "/" for the root item, then its children as "/childname", etc.) and FileInfo for each item
 - If the callback function returns an error, walking stops and that error is returned
 
 #### Permission Management
