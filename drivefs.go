@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	errors2 "github.com/Jumpaku/go-drivefs/errors"
+	ers "github.com/Jumpaku/go-drivefs/errors"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
 )
@@ -46,7 +46,7 @@ func (s *DriveFS) PermSet(fileID FileID, permission Permission) (permissions []P
 			perm.Role = string(permission.Role())
 			err := updatePermissions(s.service, string(fileID), perm)
 			if err != nil {
-				return nil, errors2.NewAPIError("failed to set permission", err)
+				return nil, ers.NewAPIError("failed to set permission", err)
 			}
 		}
 	}
@@ -72,7 +72,7 @@ func (s *DriveFS) PermSet(fileID FileID, permission Permission) (permissions []P
 			Type:               granteeType,
 		})
 		if err != nil {
-			return nil, errors2.NewAPIError("failed to set permission", err)
+			return nil, ers.NewAPIError("failed to set permission", err)
 		}
 		perms = append(perms, perm)
 	}
@@ -91,7 +91,7 @@ func (s *DriveFS) PermDel(fileID FileID, grantee Grantee) (permissions []Permiss
 		if granteeMatch(perm, grantee) {
 			err := deletePermissions(s.service, string(fileID), perm.Id)
 			if err != nil {
-				return nil, errors2.NewAPIError("failed to delete permission", err)
+				return nil, ers.NewAPIError("failed to delete permission", err)
 			}
 		} else {
 			remainedPermissions = append(remainedPermissions, perm)
@@ -113,7 +113,7 @@ func (s *DriveFS) MkdirAll(rootID FileID, path Path) (info FileInfo, err error) 
 		return FileInfo{}, err
 	}
 	if !found {
-		return FileInfo{}, fmt.Errorf("root not found: %s: %w", currentID, errors2.ErrNotFound)
+		return FileInfo{}, fmt.Errorf("root not found: %s: %w", currentID, ers.ErrNotFound)
 	}
 	for _, p := range parts {
 		files, err := findAllByNameIn(s.service, currentID, p)
@@ -121,7 +121,7 @@ func (s *DriveFS) MkdirAll(rootID FileID, path Path) (info FileInfo, err error) 
 			return FileInfo{}, fmt.Errorf("failed to find directory '%s' in '%s': %w", p, currentID, err)
 		}
 		if len(files) > 1 {
-			return FileInfo{}, fmt.Errorf("multiple directories '%s' already exist in '%s': %w", p, currentID, errors2.ErrAlreadyExists)
+			return FileInfo{}, fmt.Errorf("multiple directories '%s' already exist in '%s': %w", p, currentID, ers.ErrAlreadyExists)
 		}
 		if len(files) == 1 {
 			file = files[0]
@@ -166,7 +166,7 @@ func (s *DriveFS) Remove(fileID FileID, moveToTrash bool) (err error) {
 			return fmt.Errorf("failed to check if directory is empty: %w", err)
 		}
 		if exists {
-			return fmt.Errorf("directory '%s' is not empty: %w", fileID, errors2.ErrNotRemovable)
+			return fmt.Errorf("directory '%s' is not empty: %w", fileID, ers.ErrNotRemovable)
 		}
 	}
 
@@ -180,7 +180,7 @@ func (s *DriveFS) RemoveAll(fileID FileID, moveToTrash bool) (err error) {
 			SupportsAllDrives(true).
 			Do()
 		if err != nil {
-			return errors2.NewAPIError("failed to move file to trash", err)
+			return ers.NewAPIError("failed to move file to trash", err)
 		}
 		return nil
 	} else {
@@ -188,7 +188,7 @@ func (s *DriveFS) RemoveAll(fileID FileID, moveToTrash bool) (err error) {
 			SupportsAllDrives(true).
 			Do()
 		if err != nil {
-			return errors2.NewAPIError("failed to delete file", err)
+			return ers.NewAPIError("failed to delete file", err)
 		}
 		return nil
 	}
@@ -201,7 +201,7 @@ func (s *DriveFS) Move(fileID, newParentID FileID) (err error) {
 		return fmt.Errorf("failed to find file: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("file '%s' not found: %w", fileID, errors2.ErrNotFound)
+		return fmt.Errorf("file '%s' not found: %w", fileID, ers.ErrNotFound)
 	}
 	_, err = s.service.Files.Update(string(fileID), &drive.File{}).
 		SupportsAllDrives(true).
@@ -209,7 +209,7 @@ func (s *DriveFS) Move(fileID, newParentID FileID) (err error) {
 		AddParents(string(newParentID)).
 		Do()
 	if err != nil {
-		return errors2.NewAPIError("failed to move file", err)
+		return ers.NewAPIError("failed to move file", err)
 	}
 	return nil
 }
@@ -260,7 +260,7 @@ func (s *DriveFS) Info(fileID FileID) (info FileInfo, err error) {
 		return FileInfo{}, fmt.Errorf("failed to get file info '%s': %w", fileID, err)
 	}
 	if !found {
-		return FileInfo{}, fmt.Errorf("file not found: %s: %w", fileID, errors2.ErrNotFound)
+		return FileInfo{}, fmt.Errorf("file not found: %s: %w", fileID, ers.ErrNotFound)
 	}
 	return newFileInfo(f)
 }
@@ -274,7 +274,7 @@ func (s *DriveFS) Copy(fileID, newParentID FileID, newName string) (info FileInf
 		SupportsAllDrives(true).
 		Do()
 	if err != nil {
-		return FileInfo{}, errors2.NewAPIError("failed to copy file", err)
+		return FileInfo{}, ers.NewAPIError("failed to copy file", err)
 	}
 	return newFileInfo(f)
 }
@@ -285,7 +285,7 @@ func (s *DriveFS) Rename(fileID FileID, newName string) (info FileInfo, err erro
 		SupportsAllDrives(true).
 		Do()
 	if err != nil {
-		return FileInfo{}, errors2.NewAPIError("failed to copy file", err)
+		return FileInfo{}, ers.NewAPIError("failed to copy file", err)
 	}
 	return newFileInfo(f)
 }
@@ -343,7 +343,7 @@ func (s *DriveFS) Walk(rootID FileID, f func(Path, FileInfo) error) (err error) 
 		return fmt.Errorf("failed to get file info: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("file not found: %s: %w", rootID, errors2.ErrNotFound)
+		return fmt.Errorf("file not found: %s: %w", rootID, ers.ErrNotFound)
 	}
 	return walk(s, []string{}, file, f)
 }
@@ -356,13 +356,13 @@ func resolvePathParts(s *DriveFS, fileID FileID) (parts []string, err error) {
 			return nil, fmt.Errorf("failed to get file info: %w", err)
 		}
 		if !found {
-			return nil, fmt.Errorf("file not found: %s: %w", currentID, errors2.ErrNotFound)
+			return nil, fmt.Errorf("file not found: %s: %w", currentID, ers.ErrNotFound)
 		}
 		if len(f.Parents) == 0 {
 			break
 		}
 		if len(f.Parents) > 1 {
-			return nil, fmt.Errorf("failed to resolve path with multiple parents not supported: %w", errors2.ErrMultiParentsNotSupported)
+			return nil, fmt.Errorf("failed to resolve path with multiple parents not supported: %w", ers.ErrMultiParentsNotSupported)
 		}
 		parts = append(parts, f.Name)
 		currentID = f.Parents[0]
@@ -382,7 +382,7 @@ func queryFileInfo(s *drive.Service, query string) (results []*drive.File, err e
 			return nil
 		})
 	if err != nil {
-		return nil, errors2.NewAPIError("failed to query files", err)
+		return nil, ers.NewAPIError("failed to query files", err)
 	}
 	return results, nil
 }
@@ -435,15 +435,15 @@ func walk(s *DriveFS, path []string, file *drive.File, f func(Path, FileInfo) er
 
 func validateAndSplitPath(path string) (parts []string, err error) {
 	if path == "" {
-		return nil, fmt.Errorf("empty path: %w", errors2.ErrInvalidPath)
+		return nil, fmt.Errorf("empty path: %w", ers.ErrInvalidPath)
 	}
 	if !strings.HasPrefix(path, "/") {
-		return nil, fmt.Errorf("path must be absolute and start with '/': %w", errors2.ErrInvalidPath)
+		return nil, fmt.Errorf("path must be absolute and start with '/': %w", ers.ErrInvalidPath)
 	}
 
 	for _, p := range strings.Split(path, "/") {
 		if p == "." || p == ".." {
-			return nil, fmt.Errorf("relative path components are not allowed: %w", errors2.ErrInvalidPath)
+			return nil, fmt.Errorf("relative path components are not allowed: %w", ers.ErrInvalidPath)
 		}
 		if p == "" {
 			continue
@@ -499,7 +499,7 @@ func existsIn(s *drive.Service, parentID string) (found bool, err error) {
 		PageSize(1).
 		Do()
 	if err != nil {
-		return false, errors2.NewAPIError("failed to list files", err)
+		return false, ers.NewAPIError("failed to list files", err)
 	}
 	return len(res.Files) != 0, nil
 }
@@ -516,7 +516,7 @@ func findByID(s *drive.Service, fileID string) (file *drive.File, found bool, er
 				return nil, false, nil
 			}
 		}
-		return nil, false, errors2.NewAPIError("failed to get files", err)
+		return nil, false, ers.NewAPIError("failed to get files", err)
 	}
 	return file, true, nil
 }
@@ -536,7 +536,7 @@ func createDirIn(s *drive.Service, parentID, name string) (file *drive.File, err
 		Fields(driveFileFields).
 		Do()
 	if err != nil {
-		return nil, errors2.NewAPIError("failed to create directory", err)
+		return nil, ers.NewAPIError("failed to create directory", err)
 	}
 	return file, nil
 }
@@ -550,7 +550,7 @@ func createFileIn(s *drive.Service, parentID, name string) (file *drive.File, er
 		Fields(driveFileFields).
 		Do()
 	if err != nil {
-		return nil, errors2.NewAPIError("failed to create file", err)
+		return nil, ers.NewAPIError("failed to create file", err)
 	}
 	return file, nil
 }
@@ -566,7 +566,7 @@ func createShortcutIn(s *drive.Service, parentID, name, targetID string) (file *
 		Fields(driveFileFields).
 		Do()
 	if err != nil {
-		return nil, errors2.NewAPIError("failed to create shortcut", err)
+		return nil, ers.NewAPIError("failed to create shortcut", err)
 	}
 	return file, nil
 }
@@ -576,30 +576,30 @@ func downloadFile(s *drive.Service, fileID string) (data []byte, err error) {
 		SupportsAllDrives(true).
 		Do()
 	if err != nil {
-		return nil, errors2.NewAPIError("failed to get file", err)
+		return nil, ers.NewAPIError("failed to get file", err)
 	}
 
 	if strings.HasPrefix(file.MimeType, mimeTypePrefixGoogleApp) {
-		return nil, fmt.Errorf("cannot download google-apps file: %w", errors2.ErrNotReadable)
+		return nil, fmt.Errorf("cannot download google-apps file: %w", ers.ErrNotReadable)
 	}
 
 	resp, err := s.Files.Get(fileID).
 		SupportsAllDrives(true).
 		Download()
 	if err != nil {
-		return nil, errors2.NewAPIError("failed to download file", err)
+		return nil, ers.NewAPIError("failed to download file", err)
 	}
 	defer func() {
 		closeErr := resp.Body.Close()
 		if closeErr != nil {
-			closeErr = errors2.NewIOError("failed to close file body", closeErr)
+			closeErr = ers.NewIOError("failed to close file body", closeErr)
 		}
 		err = errors.Join(err, closeErr)
 	}()
 
 	data, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, errors2.NewIOError("failed to read file body", err)
+		return nil, ers.NewIOError("failed to read file body", err)
 	}
 	return data, nil
 }
@@ -610,7 +610,7 @@ func uploadFile(s *drive.Service, fileID string, data []byte) (err error) {
 		Media(bytes.NewBuffer(data)).
 		Do()
 	if err != nil {
-		return errors2.NewAPIError("failed to upload file", err)
+		return ers.NewAPIError("failed to upload file", err)
 	}
 	return nil
 }
@@ -662,7 +662,7 @@ func listPermissions(service *drive.Service, fileID string) ([]*drive.Permission
 			return nil
 		})
 	if err != nil {
-		return nil, errors2.NewAPIError("failed to list permissions", err)
+		return nil, ers.NewAPIError("failed to list permissions", err)
 	}
 	return permissions, nil
 }
@@ -673,7 +673,7 @@ func updatePermissions(s *drive.Service, fileID string, perm *drive.Permission) 
 		Fields(drivePermissionFields).
 		Do()
 	if err != nil {
-		return errors2.NewAPIError("failed to set permission", err)
+		return ers.NewAPIError("failed to set permission", err)
 	}
 	return nil
 }
@@ -684,7 +684,7 @@ func createPermissions(s *drive.Service, fileID string, perm *drive.Permission) 
 		Fields(drivePermissionFields).
 		Do()
 	if err != nil {
-		return nil, errors2.NewAPIError("failed to set permission", err)
+		return nil, ers.NewAPIError("failed to set permission", err)
 	}
 	return permission, nil
 }
@@ -695,7 +695,7 @@ func deletePermissions(s *drive.Service, fileID, permID string) (err error) {
 		Fields(drivePermissionFields).
 		Do()
 	if err != nil {
-		return errors2.NewAPIError("failed to set permission", err)
+		return ers.NewAPIError("failed to set permission", err)
 	}
 	return nil
 }

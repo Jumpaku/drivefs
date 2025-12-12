@@ -6,15 +6,17 @@ import (
 )
 
 type Form struct {
-	formID                drivefs.FileID
-	infoTitle             string
-	updateInfoTitle       bool
-	infoDescription       string
-	updateInfoDescription bool
-	publishState          PublishState
-	updatePublishState    bool
-	items                 []Item
-	updateRequests        []*forms.Request
+	formID                    drivefs.FileID
+	infoTitle                 string
+	updateInfoTitle           bool
+	infoDescription           string
+	updateInfoDescription     bool
+	emailCollectionType       EmailCollectionType
+	updateEmailCollectionType bool
+	publishState              PublishState
+	updatePublishState        bool
+	items                     []Item
+	updateItemsRequests       []*forms.Request
 }
 
 func (f *Form) FormID() (formID drivefs.FileID) {
@@ -47,6 +49,9 @@ func (f *Form) SetPublishState(publishState PublishState) *Form {
 func (f *Form) PublishState() (publishState PublishState) {
 	return f.publishState
 }
+func (f *Form) EmailCollectionType() (emailCollectionType EmailCollectionType) {
+	return f.emailCollectionType
+}
 
 func (f *Form) Items() (items []Item) {
 	return append([]Item{}, f.items...)
@@ -56,7 +61,7 @@ func (f *Form) CreateItem(index int, item Item) *Form {
 	old := f.items
 	f.items = append(append(append([]Item{}, old[:index]...), item), old[index:]...)
 
-	f.updateRequests = append(f.updateRequests, &forms.Request{
+	f.updateItemsRequests = append(f.updateItemsRequests, &forms.Request{
 		CreateItem: &forms.CreateItemRequest{
 			Item: &forms.Item{
 				ItemId:            item.ItemId(),
@@ -80,7 +85,7 @@ func (f *Form) DeleteItem(index int) *Form {
 	old := f.items
 	f.items = append(old[:index], old[index+1:]...)
 
-	f.updateRequests = append(f.updateRequests, &forms.Request{
+	f.updateItemsRequests = append(f.updateItemsRequests, &forms.Request{
 		DeleteItem: &forms.DeleteItemRequest{
 			Location: &forms.Location{Index: int64(index)},
 		},
@@ -95,7 +100,7 @@ func (f *Form) MoveItem(index, newIndex int) *Form {
 	old = append(old[:index], old[index+1:]...)
 	f.items = append(append(old[:newIndex], v), old[newIndex:]...)
 
-	f.updateRequests = append(f.updateRequests, &forms.Request{
+	f.updateItemsRequests = append(f.updateItemsRequests, &forms.Request{
 		MoveItem: &forms.MoveItemRequest{
 			NewLocation:      &forms.Location{Index: int64(newIndex)},
 			OriginalLocation: &forms.Location{Index: int64(index)},
@@ -108,7 +113,7 @@ func (f *Form) MoveItem(index, newIndex int) *Form {
 func (f *Form) UpdateItem(index int, item Item) *Form {
 	f.items[index] = item
 
-	f.updateRequests = append(f.updateRequests, &forms.Request{
+	f.updateItemsRequests = append(f.updateItemsRequests, &forms.Request{
 		UpdateItem: &forms.UpdateItemRequest{
 			Item: &forms.Item{
 				ItemId:            item.ItemId(),

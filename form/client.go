@@ -9,16 +9,16 @@ import (
 	"google.golang.org/api/forms/v1"
 )
 
-type FormsClient struct {
+type Client struct {
 	service *forms.Service
 }
 
-func NewForms(service *forms.Service) *FormsClient {
-	return &FormsClient{service: service}
+func New(service *forms.Service) *Client {
+	return &Client{service: service}
 }
 
-func (c *FormsClient) Get(formID drivefs.FileID) (form *Form, err error) {
-	f, err := c.service.Forms.Get(string(formID)).Do()
+func (c *Client) Get(formID drivefs.FileID) (form *Form, err error) {
+	f, err := c.service.Forms.Get(string(formID)).Fields().Do()
 	if err != nil {
 		return nil, errors.NewAPIError("failed to change publish state", err)
 	}
@@ -37,23 +37,50 @@ func (c *FormsClient) Get(formID drivefs.FileID) (form *Form, err error) {
 			videoItem:         item.VideoItem,
 		})
 	}
+
+	publishState := PublishStateUnpublished
+	if f.PublishSettings.PublishState.IsPublished {
+		if f.PublishSettings.PublishState.IsAcceptingResponses {
+			publishState = PublishStateAccepting
+		} else {
+			publishState = PublishStateNotAccepting
+		}
+	}
 	return &Form{
-		formID:          drivefs.FileID(f.FormId),
-		infoTitle:       f.Info.Title,
-		infoDescription: f.Info.Description,
-		items:           items,
+		formID:              drivefs.FileID(f.FormId),
+		infoTitle:           f.Info.Title,
+		infoDescription:     f.Info.Description,
+		emailCollectionType: EmailCollectionType(f.Settings.EmailCollectionType),
+		publishState:        publishState,
+		items:               items,
 	}, nil
 }
 
-func (c *FormsClient) Save(form *Form) (result *Form, err error) {
+func (c *Client) Save(form *Form) (result *Form, err error) {
 	formID := string(form.FormID())
 	if formID == "" {
+		items := []*forms.Item{}
+		for _, item := range form.items {
+			items = append(items, &forms.Item{
+				Description:       item.InfoDescription(),
+				ImageItem:         item.ImageItem(),
+				PageBreakItem:     item.PageBreakItem(),
+				QuestionGroupItem: item.QuestionGroupItem(),
+				QuestionItem:      item.QuestionItem(),
+				TextItem:          item.TextItem(),
+				Title:             item.InfoTitle(),
+				VideoItem:         item.VideoItem(),
+			})
+		}
 		f, err := c.service.Forms.Create(&forms.Form{
 			Info: &forms.Info{
 				Description: form.infoDescription,
 				Title:       form.infoTitle,
 			},
-			Items: nil,
+			Settings: &forms.FormSettings{
+				EmailCollectionType: string(form.emailCollectionType),
+			},
+			Items: items,
 		}).Do()
 		if err != nil {
 			return nil, errors.NewAPIError("failed to create form", err)
@@ -77,7 +104,17 @@ func (c *FormsClient) Save(form *Form) (result *Form, err error) {
 				},
 			})
 		}
-		updates = append(updates, form.updateRequests...)
+		if form.updateEmailCollectionType {
+			updates = append(updates, &forms.Request{
+				UpdateSettings: &forms.UpdateSettingsRequest{
+					Settings: &forms.FormSettings{
+						EmailCollectionType: string(form.EmailCollectionType()),
+					},
+					UpdateMask: "email_collection_type",
+				},
+			})
+		}
+		updates = append(updates, form.updateItemsRequests...)
 		_, err := c.service.Forms.BatchUpdate(formID, &forms.BatchUpdateFormRequest{
 			Requests: nil,
 		}).Do()
@@ -96,14 +133,15 @@ func (c *FormsClient) Save(form *Form) (result *Form, err error) {
 			},
 			UpdateMask: "publish_state",
 		}).Do()
+		if err != nil {
+			return nil, errors.NewAPIError("failed to change publish state", err)
+		}
 	}
-	if err != nil {
-		return nil, errors.NewAPIError("failed to change publish state", err)
-	}
-	return nil, nil
+
+	return c.Get(drivefs.FileID(formID))
 }
 
-func (c *FormsClient) FetchResult(formID drivefs.FileID) (result *FormResult, err error) {
+func (c *Client) FetchResult(formID drivefs.FileID) (result *FormResult, err error) {
 	form, err := c.service.Forms.Get(string(formID)).Do()
 	if err != nil {
 		return nil, errors.NewAPIError("failed to get form", err)
@@ -153,17 +191,4 @@ func (c *FormsClient) FetchResult(formID drivefs.FileID) (result *FormResult, er
 	}
 
 	return result, nil
-}
-
-type QuestionID = string
-type FormAnswer struct {
-	ResponseID        string
-	RespondentEmail   string
-	CreateTime        time.Time
-	LastSubmittedTime time.Time
-	AnswerTexts       map[QuestionID][]string
-}
-type FormResult struct {
-	Questions map[QuestionID]string
-	Answers   []FormAnswer
 }
