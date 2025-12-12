@@ -1,4 +1,4 @@
-package drivefs
+package errors
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 
 var (
 	ErrInvalidPath              = errors.New("invalid path")
-	ErrDriveError               = errors.New("drive error")
+	ErrAPIError                 = errors.New("api error")
 	ErrIOError                  = errors.New("io error")
 	ErrNotFound                 = errors.New("not found")
 	ErrAlreadyExists            = errors.New("already exists")
@@ -23,15 +23,15 @@ type wrapError struct {
 
 var _ error = (*wrapError)(nil)
 
-func newDriveError(msg string, cause error) error {
+func NewAPIError(msg string, cause error) error {
 	return &wrapError{
-		underlying: ErrDriveError,
+		underlying: ErrAPIError,
 		msg:        msg,
 		cause:      cause,
 	}
 }
 
-func newIOError(msg string, cause error) error {
+func NewIOError(msg string, cause error) error {
 	return &wrapError{
 		underlying: ErrIOError,
 		msg:        msg,
