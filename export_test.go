@@ -1,16 +1,16 @@
 package drivefs
 
-// This file is part of the package tests (package drivefs) and provides
-// helpers that allow tests in the external package to access internal
-// package constructs. Helpers are exported so `drivefs_test` can call them
-// via the module import path.
+// This file provides test helpers that expose internal package constructs
+// to the external test package (drivefs_test).
 
-// NewDriveError constructs a drive-wrapped error using package-internal constructor.
+// NewDriveError constructs a drive error using the internal constructor.
+// This is exported for testing purposes only.
 func NewDriveError(msg string, cause error) error {
 	return newDriveError(msg, cause)
 }
 
-// NewIOError constructs an io-wrapped error using package-internal constructor.
+// NewIOError constructs an I/O error using the internal constructor.
+// This is exported for testing purposes only.
 func NewIOError(msg string, cause error) error {
 	return newIOError(msg, cause)
 }

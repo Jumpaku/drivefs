@@ -1,3 +1,8 @@
+// Package drivefs provides a file system-like interface for Google Drive operations.
+//
+// This package wraps the google.golang.org/api/drive/v3 package and offers familiar
+// filesystem operations such as creating, reading, writing, copying, renaming, moving,
+// and deleting files and directories. The package fully supports both My Drive and Shared Drives.
 package drivefs
 
 import (
@@ -14,15 +19,20 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
+// DriveFS provides file system-like operations for Google Drive.
+// It wraps a drive.Service and provides high-level methods for managing files and directories.
 type DriveFS struct {
 	service *drive.Service
 }
 
 // New creates a new DriveFS instance with the given drive.Service.
+// The service should be properly authenticated before being passed to this function.
 func New(service *drive.Service) *DriveFS {
 	return &DriveFS{service: service}
 }
 
+// PermList lists all permissions for the file or directory with the given fileID.
+// Returns a slice of Permission objects representing the access permissions.
 func (s *DriveFS) PermList(fileID FileID) (permissions []Permission, err error) {
 	perms, err := listPermissions(s.service, string(fileID))
 	if err != nil {
@@ -31,6 +41,10 @@ func (s *DriveFS) PermList(fileID FileID) (permissions []Permission, err error) 
 	return newPermissions(perms), nil
 }
 
+// PermSet sets a permission for the file or directory with the given fileID.
+// If a permission for the same grantee already exists, it will be updated.
+// Otherwise, a new permission will be created.
+// Returns all permissions after the operation.
 func (s *DriveFS) PermSet(fileID FileID, permission Permission) (permissions []Permission, err error) {
 	perms, err := listPermissions(s.service, string(fileID))
 	if err != nil {
@@ -79,6 +93,8 @@ func (s *DriveFS) PermSet(fileID FileID, permission Permission) (permissions []P
 	return newPermissions(perms), nil
 }
 
+// PermDel deletes all permissions matching the given grantee for the file or directory with the given fileID.
+// Returns all remaining permissions after the operation.
 func (s *DriveFS) PermDel(fileID FileID, grantee Grantee) (permissions []Permission, err error) {
 	perms, err := listPermissions(s.service, string(fileID))
 	if err != nil {
@@ -100,7 +116,10 @@ func (s *DriveFS) PermDel(fileID FileID, grantee Grantee) (permissions []Permiss
 	return newPermissions(perms), nil
 }
 
-// MkdirAll creates all directories along the given path if they do not already exist and returns the ID of the last created directory.
+// MkdirAll creates all directories along the given path if they do not already exist.
+// The path must be absolute (starting with '/') and is resolved from the specified rootID.
+// Returns the FileInfo of the final directory in the path.
+// If two or more directories with the same name exist at any level, returns ErrAlreadyExists.
 func (s *DriveFS) MkdirAll(rootID FileID, path Path) (info FileInfo, err error) {
 	parts, err := validateAndSplitPath(string(path))
 	if err != nil {
@@ -136,7 +155,8 @@ func (s *DriveFS) MkdirAll(rootID FileID, path Path) (info FileInfo, err error) 
 	return newFileInfo(file)
 }
 
-// Mkdir creates a directory with the given name and returns the ID of the created directory.
+// Mkdir creates a single directory with the given name in the specified parent directory.
+// Returns the FileInfo of the created directory.
 func (s *DriveFS) Mkdir(parentID FileID, name string) (info FileInfo, err error) {
 	f, err := createDirIn(s.service, string(parentID), name)
 	if err != nil {
@@ -145,12 +165,16 @@ func (s *DriveFS) Mkdir(parentID FileID, name string) (info FileInfo, err error)
 	return newFileInfo(f)
 }
 
-// ReadFile reads the file with the given fileID and returns its contents as a byte slice.
+// ReadFile reads the entire contents of the file with the given fileID.
+// Returns the file data as a byte slice.
+// Returns ErrNotReadable for Google Apps files (Docs, Sheets, etc.) that cannot be directly downloaded.
 func (s *DriveFS) ReadFile(fileID FileID) (data []byte, err error) {
 	return downloadFile(s.service, string(fileID))
 }
 
-// Remove moves the file or directory with the given fileID to the trash.
+// Remove deletes the file or directory with the given fileID.
+// For directories, only empty directories can be removed; otherwise returns ErrNotRemovable.
+// If moveToTrash is true, the file is moved to trash; otherwise it is permanently deleted.
 func (s *DriveFS) Remove(fileID FileID, moveToTrash bool) (err error) {
 	file, found, err := findByID(s.service, string(fileID))
 	if err != nil {
@@ -172,7 +196,8 @@ func (s *DriveFS) Remove(fileID FileID, moveToTrash bool) (err error) {
 	return s.RemoveAll(fileID, moveToTrash)
 }
 
-// RemoveAll moves the file or directory with the given fileID to the trash or deletes it permanently.
+// RemoveAll deletes the file or directory with the given fileID, including all children if it's a directory.
+// If moveToTrash is true, the file is moved to trash; otherwise it is permanently deleted.
 func (s *DriveFS) RemoveAll(fileID FileID, moveToTrash bool) (err error) {
 	if moveToTrash {
 		_, err := s.service.Files.Update(string(fileID), &drive.File{Trashed: true}).
@@ -193,7 +218,8 @@ func (s *DriveFS) RemoveAll(fileID FileID, moveToTrash bool) (err error) {
 	}
 }
 
-// Move moves the file or directory at fileID to the new parent directory specified by newParentID.
+// Move moves the file or directory with the given fileID to a new parent directory.
+// Returns ErrNotFound if the file does not exist.
 func (s *DriveFS) Move(fileID, newParentID FileID) (err error) {
 	f, found, err := findByID(s.service, string(fileID))
 	if err != nil {
@@ -213,12 +239,13 @@ func (s *DriveFS) Move(fileID, newParentID FileID) (err error) {
 	return nil
 }
 
-// WriteFile writes the provided data to the file with the given fileID. If the file exists, it will be overwritten. Returns an error on failure.
+// WriteFile writes data to the file with the given fileID, overwriting any existing content.
 func (s *DriveFS) WriteFile(fileID FileID, data []byte) (err error) {
 	return uploadFile(s.service, string(fileID), data)
 }
 
-// ReadDir lists the contents of the directory with the given fileID.
+// ReadDir reads the directory with the given fileID and returns a slice of FileInfo
+// for all files and subdirectories within it. Does not include trashed items.
 func (s *DriveFS) ReadDir(fileID FileID) (children []FileInfo, err error) {
 	l, err := findAllIn(s.service, string(fileID))
 	if err != nil {
@@ -234,7 +261,8 @@ func (s *DriveFS) ReadDir(fileID FileID) (children []FileInfo, err error) {
 	return children, nil
 }
 
-// Create creates a new file with the given name in the directory with the given parentID.
+// Create creates a new empty file with the given name in the specified parent directory.
+// Returns the FileInfo of the created file.
 func (s *DriveFS) Create(parentID FileID, name string) (info FileInfo, err error) {
 	f, err := createFileIn(s.service, string(parentID), name)
 	if err != nil {
@@ -243,7 +271,9 @@ func (s *DriveFS) Create(parentID FileID, name string) (info FileInfo, err error
 	return newFileInfo(f)
 }
 
-// Shortcut creates a new shortcut to the file with the given targetID in the directory with the given parentID.
+// Shortcut creates a new shortcut with the given name that points to the target file.
+// The shortcut is created in the specified parent directory.
+// Returns the FileInfo of the created shortcut.
 func (s *DriveFS) Shortcut(parentID FileID, name string, targetID FileID) (info FileInfo, err error) {
 	f, err := createShortcutIn(s.service, string(parentID), name, string(targetID))
 	if err != nil {
@@ -252,7 +282,8 @@ func (s *DriveFS) Shortcut(parentID FileID, name string, targetID FileID) (info 
 	return newFileInfo(f)
 }
 
-// Info returns the FileInfo for the file with the given fileID.
+// Info retrieves metadata for the file or directory with the given fileID.
+// Returns ErrNotFound if the file does not exist.
 func (s *DriveFS) Info(fileID FileID) (info FileInfo, err error) {
 	f, found, err := findByID(s.service, string(fileID))
 	if err != nil {
@@ -264,7 +295,9 @@ func (s *DriveFS) Info(fileID FileID) (info FileInfo, err error) {
 	return newFileInfo(f)
 }
 
-// Copy creates a copy of the file with the given fileID in the specified new parent directory with the provided new name.
+// Copy creates a copy of the file with the given fileID.
+// The copy is placed in the specified parent directory with the given name.
+// Returns the FileInfo of the copied file.
 func (s *DriveFS) Copy(fileID, newParentID FileID, newName string) (info FileInfo, err error) {
 	f, err := s.service.Files.Copy(string(fileID), &drive.File{
 		Name:    newName,
@@ -278,7 +311,8 @@ func (s *DriveFS) Copy(fileID, newParentID FileID, newName string) (info FileInf
 	return newFileInfo(f)
 }
 
-// Rename renames the file with the given fileID to the specified new name.
+// Rename changes the name of the file or directory with the given fileID.
+// Returns the updated FileInfo.
 func (s *DriveFS) Rename(fileID FileID, newName string) (info FileInfo, err error) {
 	f, err := s.service.Files.Update(string(fileID), &drive.File{Name: newName}).
 		SupportsAllDrives(true).
@@ -289,7 +323,9 @@ func (s *DriveFS) Rename(fileID FileID, newName string) (info FileInfo, err erro
 	return newFileInfo(f)
 }
 
-// Query executes the given query and returns a slice of FileInfo for all files and directories that match the query.
+// Query executes a Google Drive API search query and returns matching files.
+// The query uses Google Drive's query syntax.
+// See https://developers.google.com/drive/api/guides/search-files for query syntax.
 func (s *DriveFS) Query(query string) (results []FileInfo, err error) {
 	files, err := queryFileInfo(s.service, query)
 	if err != nil {
@@ -305,7 +341,9 @@ func (s *DriveFS) Query(query string) (results []FileInfo, err error) {
 	return results, nil
 }
 
-// FindByPath resolves the given absolute path from the root directory and returns a slice of FileInfo for all files and directories that match the path.
+// FindByPath resolves the given absolute path from the specified root directory.
+// Returns all files matching the path (multiple results if duplicates exist at any level).
+// The path must be absolute (starting with '/').
 func (s *DriveFS) FindByPath(rootID FileID, path Path) (info []FileInfo, err error) {
 	parts, err := validateAndSplitPath(string(path))
 	if err != nil {
@@ -328,14 +366,17 @@ func (s *DriveFS) FindByPath(rootID FileID, path Path) (info []FileInfo, err err
 	return info, nil
 }
 
-// ResolvePath returns the absolute path from the root directory to the file with the given fileID.
+// ResolvePath returns the absolute path from the root to the file with the given fileID.
 // The returned path is a slash-separated string (e.g., "/folder/subfolder/file").
+// Returns ErrMultiParentsNotSupported if the file has multiple parents.
 func (s *DriveFS) ResolvePath(fileID FileID) (path Path, err error) {
 	parts, err := resolvePathParts(s, fileID)
 	return Path("/" + strings.Join(parts, "/")), nil
 }
 
-// Walk walks the file tree rooted at fileID, calling f for each file or directory in the tree, including fileID itself.
+// Walk traverses the file tree rooted at the given fileID.
+// For each file or directory (including the root), it calls the provided function with
+// the relative path and FileInfo. If the function returns an error, walking stops.
 func (s *DriveFS) Walk(rootID FileID, f func(Path, FileInfo) error) (err error) {
 	file, found, err := findByID(s.service, string(rootID))
 	if err != nil {
