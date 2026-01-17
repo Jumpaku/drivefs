@@ -70,8 +70,7 @@ func (s *DriveFS) Mkdir(parentID drivefs.FileID, name string) (info drivefs.File
 // Returns the file data as a byte slice.
 //
 // It panics if reading the file fails for any reason,
-// including for Google Apps files (Docs, Sheets, etc.) that cannot be directly downloaded
-// (the underlying error would be ErrNotReadable).
+// including for Google Apps files (Docs, Sheets, etc.) that cannot be directly downloaded.
 func (s *DriveFS) ReadFile(fileID drivefs.FileID) (data []byte) {
 	return must1(s.driveFS.ReadFile(fileID))
 }
@@ -81,7 +80,7 @@ func (s *DriveFS) ReadFile(fileID drivefs.FileID) (data []byte) {
 // For directories, only empty directories can be removed.
 //
 // It panics if removal fails for any reason, including when attempting to remove
-// a non-empty directory (the underlying error would be ErrNotRemovable).
+// a non-empty directory.
 func (s *DriveFS) Remove(fileID drivefs.FileID, moveToTrash bool) {
 	must0(s.driveFS.Remove(fileID, moveToTrash))
 }
@@ -96,8 +95,7 @@ func (s *DriveFS) RemoveAll(fileID drivefs.FileID, moveToTrash bool) {
 
 // Move moves the file or directory with the given fileID to a new parent directory.
 //
-// It panics if the move fails, including if the file does not exist
-// (the underlying error would be ErrNotFound).
+// It panics if the move fails, including if the file does not exist.
 func (s *DriveFS) Move(fileID, newParentID drivefs.FileID) {
 	must0(s.driveFS.Move(fileID, newParentID))
 }
@@ -137,8 +135,7 @@ func (s *DriveFS) Shortcut(parentID drivefs.FileID, name string, targetID drivef
 // Info retrieves metadata for the file or directory with the given fileID.
 // Returns the FileInfo for the file or directory.
 //
-// It panics if retrieving metadata fails, including if the file does not exist
-// (the underlying error would be ErrNotFound).
+// It panics if retrieving metadata fails, including if the file does not exist.
 func (s *DriveFS) Info(fileID drivefs.FileID) (info drivefs.FileInfo) {
 	return must1(s.driveFS.Info(fileID))
 }
@@ -181,8 +178,7 @@ func (s *DriveFS) FindByPath(rootID drivefs.FileID, path drivefs.Path) (info []d
 // ResolvePath returns the absolute path from the root to the file with the given fileID.
 // The returned path is a slash-separated string (e.g., "/folder/subfolder/file").
 //
-// It panics if resolving the path fails, including if the file has multiple parents
-// (the underlying error would be ErrMultiParentsNotSupported).
+// It panics if resolving the path fails, including if the file has multiple parents.
 func (s *DriveFS) ResolvePath(fileID drivefs.FileID) (path drivefs.Path) {
 	return must1(s.driveFS.ResolvePath(fileID))
 }
